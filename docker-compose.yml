@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  # データベース初期化サービス
+  # このサービスはDBファイルとテーブルを作成した後に正常終了します。
+  db-setup:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: npm run db:setup
+    volumes:
+      - .:/app
+      # node_modulesはホストと共有せず、コンテナ内のものを使用
+      - /app/node_modules
+
+  # アプリケーション本体サービス
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: npm run dev
+    ports:
+      # ホストの3000番ポートをコンテナの3000番ポートにマッピング
+      - "3000:3000"
+      # Node.jsのデバッグポート
+      - "9229:9229"
+    volumes:
+      - .:/app
+      - /app/node_modules
+    # [追加] 環境変数をコンテナに設定
+    environment:
+      # メッセージの有効期限（時間）。デフォルトは48時間。
+      # 例: '0.02' (約1.2分)
+      - MESSAGE_EXPIRY_HOURS=0.02
+    depends_on:
+      # db-setupサービスが完了してから起動
+      db-setup:
+        condition: service_completed_successfully
+    restart: unless-stopped
