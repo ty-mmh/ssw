@@ -1,25 +1,112 @@
-<html>
-<body>
-    <div id="root"></div>
+<!DOCTYPE html>
+<html lang="ja" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>セキュアチャット - FRIENDLYモード</title>
 
+    <link rel="icon" href="data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%233b82f6' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpath d='M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z'/%3e%3c/svg%3e">
+    
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="/socket.io/socket.io.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <style>
+        body {
+            background-color: #0c0a09; /* a dark fallback */
+        }
+        .glass-pane {
+            background-color: rgba(31, 41, 55, 0.5); /* bg-gray-800 with opacity */
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border-width: 1px;
+            border-color: rgba(75, 85, 99, 0.5); /* border-gray-600 with opacity */
+        }
+        /* スクロールバーのスタイル */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #6b7280; }
+        /* [追加] 空間作成欄の展開/折りたたみアニメーション用クラス */
+        .collapsible {
+          display: grid;
+          grid-template-rows: 0fr; /* 初期状態は高さ0 */
+          transition: grid-template-rows 0.3s ease-in-out, margin-top 0.3s ease-in-out;
+        }
+        .collapsible.open {
+          grid-template-rows: 1fr; /* openクラスが付くと高さが内容に合うように広がる */
+          margin-top: 1rem; /* mt-4相当 */
+        }
+        /* アニメーションを滑らかにするための設定 */
+        .collapsible > div {
+          overflow: hidden;
+        }
+        /* [追加] 通知アイテムのアニメーションスタイル */
+        .notification-item {
+            opacity: 0;
+            transform: translateX(100%);
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .notification-item.visible {
+            opacity: 1;
+            transform: translateX(0);
+        }
+        .notification-item.exiting {
+            opacity: 0;
+            transform: scale(0.95);
+        }
+    </style>
+</head>
+<body class="bg-stone-950">
+    <div id="root"></div>
+
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            colors: {
+              'primary': '#3b82f6', // blue-500
+              'secondary': '#8b5cf6', // purple-500
+              'accent': '#10b981', // emerald-500
+              'danger': '#ef4444', // red-500
+              'warning': '#f59e0b', // amber-500
+            },
+            animation: {
+                'fade-in': 'fadeIn 0.5s ease-out forwards',
+                'subtle-pulse': 'subtlePulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+            },
+            keyframes: {
+                fadeIn: {
+                    '0%': { opacity: 0, transform: 'translateY(10px)' },
+                    '100%': { opacity: 1, transform: 'translateY(0)' },
+                },
+                subtlePulse: {
+                    '0%, 100%': { opacity: 1 },
+                    '50%': { opacity: .7 },
+                }
+            }
+          }
+        }
+      }
+    </script>
 
     <script src="/js/modules/icons.js"></script>
     <script src="/js/modules/utils.js"></script>
-
     <script src="/js/modules/crypto.js"></script>
     <script src="/js/modules/sessionManager.js"></script>
+    <script src="/js/modules/KeyExchangeManager.js"></script>
     <script src="/js/modules/api.js"></script>
 
-    <script src="/js/modules/KeyExchangeManager.js"></script>
-
+    <script src="/js/modules/ErrorHandler.js"></script>
+    <script src="/js/components/UnifiedErrorDisplay.js"></script>
+    
     <script src="/js/components/enhanced/EncryptionStatus.js"></script>
     <script src="/js/components/enhanced/EnhancedMessageDisplay.js"></script>
     <script src="/js/components/Login.js"></script>
     <script src="/js/components/enhanced/IntegratedChatUI.js"></script>
-
+    
     <script src="/js/app.js"></script>
 </body>
 </html>

@@ -16,10 +16,19 @@ const SecureChatApp = () => {
   const [showCreateSpace, setShowCreateSpace] = useState(false);
   const [message, setMessage] = useState('');
   const [socket, setSocket] = useState(null);
+  const [showPassphraseInHeader, setShowPassphraseInHeader] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState('disconnected');
   const [encryptionStatus, setEncryptionStatus] = useState('disabled');
   const [encryptionInfo, setEncryptionInfo] = useState({});
   const [sessionCount, setSessionCount] = useState(0);
+
+  // [追加] アプリケーション起動時に一度だけ実行するuseEffect
+  useEffect(() => {
+    // 高度なエラーハンドリングシステムを初期化
+    if(window.ErrorHandler) {
+      window.ErrorHandler.initialize();
+    }
+  }, []);
 
   // --- イベントハンドラ (変更なし) ---
   const handleEnterSpace = useCallback(async () => {
@@ -32,6 +41,7 @@ const SecureChatApp = () => {
       setMessages(loadedMessages);
       setEncryptionStatus('enabled');
       setCurrentView('chat');
+      setShowPassphraseInHeader(false);
     } catch (err) {
       setError(err.message); setEncryptionStatus('error');
     } finally {
@@ -39,20 +49,28 @@ const SecureChatApp = () => {
     }
   }, [passphrase]);
 
+  // 空間作成処理
   const handleCreateSpace = useCallback(async () => {
-    if (!newSpacePassphrase.trim()) { setError('新しい合言葉を入力してください。'); return; }
+    if (!newSpacePassphrase.trim()) { 
+      // [修正] エラー通知
+      window.ErrorHandler.report('validation', '新しい合言葉を入力してください。', { severity: 'warning' });
+      return; 
+    }
     setIsLoading(true); setError('');
     try {
       await window.API.createSpace(newSpacePassphrase);
-      alert('新しい空間を作成しました。作成した合言葉で入室してください。');
+      // [修正] 成功通知
+      window.ErrorHandler.report('space', '新しい空間を作成しました。作成した合言葉で入室してください。', { severity: 'success' });
       setShowCreateSpace(false); setNewSpacePassphrase('');
     } catch (err) {
-      setError(err.message);
+      // エラーはapi.jsで報告されるので、ここでは何もしなくても良い
+      // setError(err.message); // フォーム直下のエラー表示を残す場合はこのまま
     } finally {
       setIsLoading(false);
     }
   }, [newSpacePassphrase]);
 
+  // メッセージ送信処理
   const handleSendMessage = useCallback(async () => {
     if (!message.trim() || !currentSpace) return;
     setIsLoading(true);
@@ -68,7 +86,8 @@ const SecureChatApp = () => {
         });
       }
     } catch (err) {
-      alert(`送信エラー: ${err.message}`);
+      // [修正] エラー通知
+      window.ErrorHandler.report('send', err.message, { severity: 'error' });
     } finally {
       setIsLoading(false);
     }
@@ -96,6 +115,11 @@ const SecureChatApp = () => {
     setMessages([]);
     setError('');
     setPassphrase(''); // 入力中のパスフレーズもクリア
+
+    // [追加] 空間作成フォームの状態もリセットする
+    setShowCreateSpace(false);
+    setNewSpacePassphrase('');
+
     setConnectionStatus('disconnected');
     setSessionCount(0);
     setEncryptionInfo({});
@@ -237,32 +261,44 @@ const SecureChatApp = () => {
   }, [currentSpace]); // currentSpace が変わった時のみリスナーを再設定
 
   // --- レンダリング (変更なし) ---
-  if (currentView === 'login') {
-    return React.createElement(window.LoginComponent, {
-      passphrase, setPassphrase, error, setError, newSpacePassphrase,
-      setNewSpacePassphrase, showCreateSpace, setShowCreateSpace, isLoading,
-      onEnterSpace: handleEnterSpace,
-      onCreateSpace: handleCreateSpace,
-    });
-  }
+  // [修正] アプリケーション全体をフラグメントで囲み、エラー表示コンポーネントを追加
+  return React.createElement(
+    React.Fragment,
+    null,
+    // エラー表示コンポーネントを常に最前面に配置
+    window.UnifiedErrorDisplayComponent && React.createElement(window.UnifiedErrorDisplayComponent),
+    // メインのビュー
+    (() => {
+        if (currentView === 'login') {
+            return React.createElement(window.LoginComponent, {
+            passphrase, setPassphrase, error, setError, newSpacePassphrase,
+            setNewSpacePassphrase, showCreateSpace, setShowCreateSpace, isLoading,
+            onEnterSpace: handleEnterSpace,
+            onCreateSpace: handleCreateSpace,
+            });
+        }
 
-  if (currentView === 'chat') {
-    return React.createElement(window.IntegratedChatUI, {
-      currentSpace,
-      messages,
-      message,
-      setMessage,
-      isLoading,
-      connectionStatus,
-      encryptionStatus,
-      encryptionInfo,
-      sessionCount,
-      onSendMessage: handleSendMessage,
-      onLeaveSpace: handleLeaveSpace
-    });
-  }
+        if (currentView === 'chat') {
+            return React.createElement(window.IntegratedChatUI, {
+            currentSpace,
+            messages,
+            message,
+            setMessage,
+            isLoading,
+            connectionStatus,
+            encryptionStatus,
+            encryptionInfo,
+            sessionCount,
+            showPassphraseInHeader,
+            setShowPassphraseInHeader,
+            onSendMessage: handleSendMessage,
+            onLeaveSpace: handleLeaveSpace
+            });
+        }
 
-  return React.createElement('div', null, '読み込み中...');
+        return React.createElement('div', null, '読み込み中...');
+    })()
+  );
 };
 
 

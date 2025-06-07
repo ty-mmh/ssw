@@ -23,8 +23,11 @@ window.API = (() => {
       }
       return data;
     } catch (error) {
-      console.error(`API呼び出しエラー [${endpoint}]:`, error);
+      // [修正] alertの代わりにErrorHandlerでエラーを報告
+      window.ErrorHandler.report('api', error.message, { endpoint });
+      // エラーは再度スローして、呼び出し元で個別処理できるようにする
       throw error;
+
     }
   }
 
