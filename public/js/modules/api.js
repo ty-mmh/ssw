@@ -84,5 +84,20 @@
         }),
       )
     },
+    async uploadFile(fileData, fileName) {
+      const formData = new FormData()
+      // 'file' というキーは、サーバー側の upload.single('file') と一致させる
+      formData.append('file', fileData, fileName)
+
+      const response = await fetch('/api/files/upload', {
+        method: 'POST',
+        body: formData,
+        // multipart/form-data の場合、Content-Typeはブラウザが自動設定するので不要
+      })
+
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`)
+      return data
+    },
   }
 })()

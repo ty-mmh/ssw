@@ -34,13 +34,14 @@
       ['encrypt', 'decrypt'],
     )
   }
-  const encryptDeterministically = async (message, deterministicKey) => {
+  const encryptDeterministically = async (data, deterministicKey) => {
     const iv = crypto.getRandomValues(new Uint8Array(12))
-    const data = str2ab(message)
+    // dataが文字列かArrayBufferかを判定して処理
+    const dataBuffer = typeof data === 'string' ? str2ab(data) : data
     const encryptedBuffer = await crypto.subtle.encrypt(
       { name: 'AES-GCM', iv },
       deterministicKey,
-      data,
+      dataBuffer,
     )
     return {
       encryptedData: ab2b64(encryptedBuffer),
@@ -52,6 +53,7 @@
     encryptedData,
     iv,
     deterministicKey,
+    asString = true,
   ) => {
     const encrypted = b642ab(encryptedData)
     const ivArray = b642ab(iv)
@@ -60,7 +62,10 @@
       deterministicKey,
       encrypted,
     )
-    return new TextDecoder().decode(decryptedBuffer)
+    // asStringフラグに応じて、文字列に変換するか、ArrayBufferのまま返すかを選択
+    return asString
+      ? new TextDecoder().decode(decryptedBuffer)
+      : decryptedBuffer
   }
   const derivePairwiseSecret = async (myPrivateKey, peerPublicKeyJWK) => {
     const peerPublicKey = await crypto.subtle.importKey(
