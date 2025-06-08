@@ -11,16 +11,21 @@
       if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`)
       return data
     } catch (error) {
-      window.ErrorHandler?.report('api', error.message, { endpoint })
-      throw error
+      // ErrorHandlerが利用可能であれば、エラーを報告
+      if (window.ErrorHandler) {
+        window.ErrorHandler.report('api', error.message, { endpoint })
+      }
+      throw error // エラーを再スローして呼び出し元に伝える
     }
   }
+
   window.API = {
     async enterSpace(passphrase) {
       const { space } = await call('/spaces/enter', {
         method: 'POST',
         body: JSON.stringify({ passphrase }),
       })
+      // 空間キーの生成をCryptoモジュールに依頼
       await window.Crypto.getOrCreateSpaceKey(space.id, passphrase)
       return space
     },
@@ -31,6 +36,7 @@
       })
     },
     async sendMessageFriendly(spaceId, message) {
+      // 依存モジュールから必要な情報を取得
       const activeSessionIds =
         window.SessionManager.getActiveSessionsForSpace(spaceId)
       const encryptedPayload = await window.Crypto.encryptMessageHybrid(
@@ -38,6 +44,8 @@
         spaceId,
         activeSessionIds,
       )
+
+      // サーバーに送信
       const { message: serverMessage } = await call('/messages/create', {
         method: 'POST',
         body: JSON.stringify({
@@ -47,6 +55,7 @@
           encryptedPayload,
         }),
       })
+      // フロントエンドで扱いやすいようにタイムスタンプをDateオブジェクトに変換
       return {
         ...serverMessage,
         text: message,
@@ -58,6 +67,7 @@
       return await Promise.all(
         messages.map(async (msg) => {
           const messageWithDate = { ...msg, timestamp: new Date(msg.timestamp) }
+          // encrypted_payloadは、サーバーのAPIレスポンスでパース済みのオブジェクトとして返される想定
           if (msg.encrypted && msg.encrypted_payload) {
             try {
               messageWithDate.text =
@@ -66,7 +76,7 @@
                   spaceId,
                 )
             } catch (e) {
-              messageWithDate.text = `[復号化に失敗]`
+              messageWithDate.text = `[復号化に失敗しました]`
               messageWithDate.encryptionType = 'error'
             }
           }
