@@ -1,3 +1,4 @@
 secure_chat.db
 secure_chat.db-shm
 secure_chat.db-wal
+node_modules

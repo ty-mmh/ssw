@@ -1,4 +1,4 @@
-const crypto = require('crypto');
+const crypto = require('crypto')
 
 /**
  * 暗号学的に安全なランダムIDを生成します。
@@ -7,15 +7,15 @@ const crypto = require('crypto');
  * @returns {string} 生成されたID
  */
 function generateSecureId(length = 21) {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  const randomBytes = crypto.randomBytes(length);
-  let result = '';
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+  const randomBytes = crypto.randomBytes(length)
+  let result = ''
   for (let i = 0; i < length; i++) {
-    result += chars[randomBytes[i] % chars.length];
+    result += chars[randomBytes[i] % chars.length]
   }
-  return result;
+  return result
 }
 
 module.exports = {
-  nanoid: generateSecureId
-};
+  nanoid: generateSecureId,
+}
