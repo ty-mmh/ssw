@@ -17,6 +17,10 @@ const io = new Server(server, {
   },
 })
 
+const MAX_FILE_SIZE_MB = parseInt(process.env.MAX_FILE_SIZE_MB, 10) || 10;
+const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
+console.log(`ファイルサイズの最大値は ${MAX_FILE_SIZE_MB}MB に設定されています。`);
+
 const uploadDir = path.join(__dirname, 'public/uploads')
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true })
@@ -35,7 +39,10 @@ const storage = multer.diskStorage({
     )
   },
 })
-const upload = multer({ storage: storage })
+const upload = multer({
+  storage: storage,
+  limits: { fileSize: MAX_FILE_SIZE_BYTES } // 10MB
+});
 
 const PORT = process.env.PORT || 3000
 const db = new Database('secure_chat.db')
@@ -45,22 +52,39 @@ app.use(cors())
 app.use(express.json())
 app.use(express.static(path.join(__dirname, 'public')))
 
+app.get('/api/config', (req, res) => {
+    res.json({
+        success: true,
+        config: {
+            maxFileSize: MAX_FILE_SIZE_BYTES
+        }
+    });
+});
+
 // --- APIルーター ---
 const spacesRouter = require('./routes/spaces')(db)
 const messagesRouter = require('./routes/messages')(db)
 app.use('/api/spaces', spacesRouter)
 app.use('/api/messages', messagesRouter)
 
-app.post('/api/files/upload', upload.single('file'), (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({
-      success: false,
-      error: 'ファイルがアップロードされませんでした。',
-    })
-  }
-  // アップロード成功後、クライアントからアクセス可能なファイルパスを返す
-  res.json({ success: true, filePath: `/uploads/${req.file.filename}` })
-})
+app.post('/api/files/upload', (req, res) => {
+    upload.single('file')(req, res, function (err) {
+        if (err instanceof multer.MulterError) {
+            if (err.code === 'LIMIT_FILE_SIZE') {
+                return res.status(400).json({ success: false, error: 'ファイルサイズが大きすぎます。10MB以下にしてください。' });
+            }
+            return res.status(400).json({ success: false, error: `ファイルアップロードエラー: ${err.message}` });
+        } else if (err) {
+            return res.status(500).json({ success: false, error: 'サーバー内部でエラーが発生しました。' });
+        }
+
+        if (!req.file) {
+            return res.status(400).json({ success: false, error: 'ファイルがアップロードされませんでした。' });
+        }
+        
+        res.json({ success: true, filePath: `/uploads/${req.file.filename}` });
+    });
+});
 
 // --- Socket.IO イベントハンドラ ---
 const activeSessions = new Map() // spaceId -> Set<socket.id>

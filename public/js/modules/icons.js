@@ -42,5 +42,11 @@
     Key: createIcon(
       'M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z',
     ),
+    Image: createIcon('M20 12l-8-8-8 8m8-8v16'),
+    Mic: createIcon('M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3zM19 10v2a7 7 0 0 1-14 0v-2'),
+    Play: createIcon('M5 3l14 9-14 9V3z'),
+    Pause: createIcon('M6 4h4v16H6zM14 4h4v16h-4z'),
+    Send: createIcon('M22 2L11 13 2 9l-2 9 9-4 9 9z'),
+    X: createIcon('M18 6L6 18M6 6l12 12'),
   }
 })()

@@ -39,16 +39,21 @@ try {
     CREATE TABLE IF NOT EXISTS messages (
       id TEXT PRIMARY KEY,
       space_id TEXT NOT NULL,
+      -- [変更] テキストの場合はプレースホルダー、メディアの場合は暗号化ファイルへのパスを格納
       encrypted_content TEXT NOT NULL,
       timestamp TEXT DEFAULT (datetime('now')),
       expires_at TEXT NOT NULL,
       is_deleted INTEGER DEFAULT 0,
       encrypted INTEGER DEFAULT 0,
       encrypted_payload TEXT,
+      -- [追加] メッセージ種別 (text, image, audio)
+      message_type TEXT NOT NULL DEFAULT 'text',
+      -- [追加] メディアのメタデータ (ファイル名、MIMEタイプなど)
+      metadata TEXT,
       FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
     )
   `);
-  console.log('✅ "messages" テーブルを作成しました (暗号化対応)');
+  console.log('✅ "messages" テーブルを作成しました (メディア対応)');
 
   // インデックス作成によるパフォーマンス最適化
   db.exec('CREATE INDEX IF NOT EXISTS idx_messages_space_id_timestamp ON messages(space_id, timestamp)');
@@ -66,15 +71,16 @@ try {
   `).run(sampleSpaceId, '秘密の部屋', now.toISOString(), now.toISOString());
 
   db.prepare(`
-    INSERT INTO messages (id, space_id, encrypted_content, expires_at, encrypted, encrypted_payload)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO messages (id, space_id, encrypted_content, expires_at, encrypted, encrypted_payload, message_type)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run(
     'sample-msg-1',
     sampleSpaceId,
     'ようこそ！これはFRIENDLYモードのサンプルメッセージです。',
     expiresAt.toISOString(),
     0,
-    null
+    null,
+    'text'
   );
   console.log('✅ サンプルデータを挿入しました');
 

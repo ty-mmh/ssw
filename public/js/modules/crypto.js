@@ -1,7 +1,6 @@
 // public/js/modules/crypto.js
 ;(function () {
   'use strict'
-  // このファイル内の大部分は変更ありません
   const spaceKeys = new Map()
   const passphraseCache = new Map()
   const str2ab = (str) => new TextEncoder().encode(str)
@@ -36,7 +35,6 @@
   }
   const encryptDeterministically = async (data, deterministicKey) => {
     const iv = crypto.getRandomValues(new Uint8Array(12))
-    // dataが文字列かArrayBufferかを判定して処理
     const dataBuffer = typeof data === 'string' ? str2ab(data) : data
     const encryptedBuffer = await crypto.subtle.encrypt(
       { name: 'AES-GCM', iv },
@@ -44,55 +42,50 @@
       dataBuffer,
     )
     return {
-      encryptedData: ab2b64(encryptedBuffer),
-      iv: ab2b64(iv),
-      algorithm: 'AES-GCM-256',
+      encryptedBuffer: encryptedBuffer, // [修正] Base64にせずBufferを返す
+      iv: iv, // [修正] Bufferを返す
     }
   }
+  
   const decryptDeterministically = async (
-    encryptedData,
-    iv,
+    encryptedDataB64,
+    ivB64,
     deterministicKey,
     asString = true,
   ) => {
-    const encrypted = b642ab(encryptedData)
-    const ivArray = b642ab(iv)
+    const encryptedBuffer = b642ab(encryptedDataB64);
+    const ivArray = b642ab(ivB64);
     const decryptedBuffer = await crypto.subtle.decrypt(
       { name: 'AES-GCM', iv: ivArray },
       deterministicKey,
-      encrypted,
+      encryptedBuffer,
     )
-    // asStringフラグに応じて、文字列に変換するか、ArrayBufferのまま返すかを選択
     return asString
       ? new TextDecoder().decode(decryptedBuffer)
       : decryptedBuffer
   }
+  
   const derivePairwiseSecret = async (myPrivateKey, peerPublicKeyJWK) => {
-    const peerPublicKey = await crypto.subtle.importKey(
-      'jwk',
-      peerPublicKeyJWK,
-      { name: 'ECDH', namedCurve: 'P-256' },
-      true,
-      [],
-    )
-    return await crypto.subtle.deriveBits(
-      { name: 'ECDH', public: peerPublicKey },
-      myPrivateKey,
-      256,
-    )
+    const peerPublicKey = await crypto.subtle.importKey('jwk', peerPublicKeyJWK, { name: 'ECDH', namedCurve: 'P-256' }, true, []);
+    return await crypto.subtle.deriveBits({ name: 'ECDH', public: peerPublicKey }, myPrivateKey, 256);
   }
 
   window.Crypto = {
-    isSupported:
-      typeof crypto !== 'undefined' && typeof crypto.subtle !== 'undefined',
+    isSupported: typeof crypto !== 'undefined' && typeof crypto.subtle !== 'undefined',
+    b642ab: b642ab,
+
     async getOrCreateSpaceKey(spaceId, passphrase) {
-      passphraseCache.set(spaceId, passphrase)
       if (spaceKeys.has(spaceId)) return spaceKeys.get(spaceId).sharedKey
+      if (!passphrase) passphrase = passphraseCache.get(spaceId);
+      if (!passphrase) throw new Error('キー生成のためのパスフレーズがありません。');
+      
       const key = await generateDeterministicKey(spaceId, passphrase)
       spaceKeys.set(spaceId, { sharedKey: key, type: 'deterministic' })
+      passphraseCache.set(spaceId, passphrase);
       return key
     },
     async deriveSecureSessionKey(spaceId, activeSessionIds) {
+      // ... (この関数に変更なし)
       const myPrivateKey = window.KeyExchangeManager.getMyPrivateKey()
       const mySessionId = window.SessionManager.getCurrentSession()?.sessionId
       if (!myPrivateKey || !mySessionId)
@@ -128,96 +121,88 @@
         offset += secret.byteLength
       }
       const keyMaterial = await crypto.subtle.digest('SHA-256', combinedSecrets)
-      return await crypto.subtle.importKey(
-        'raw',
-        keyMaterial,
-        { name: 'AES-GCM' },
-        false,
-        ['encrypt', 'decrypt'],
-      )
+      return await crypto.subtle.importKey('raw', keyMaterial, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
     },
-    async encryptMessageHybrid(message, spaceId, activeSessionIds) {
-      const deterministicKey = await this.getOrCreateSpaceKey(
-        spaceId,
-        passphraseCache.get(spaceId),
-      )
-      const fallbackData = await encryptDeterministically(
-        message,
-        deterministicKey,
-      )
+
+    // [修正] テキストメッセージ専用の暗号化関数
+    async encryptMessage(message, spaceId, activeSessionIds, passphrase) {
+      const deterministicKey = await this.getOrCreateSpaceKey(spaceId, passphrase)
+      const { encryptedBuffer, iv } = await encryptDeterministically(message, deterministicKey)
+      
+      const fallbackData = {
+          encryptedData: ab2b64(encryptedBuffer),
+          iv: ab2b64(iv),
+      };
+
       if (activeSessionIds.length <= 1)
         return { type: 'deterministic', ...fallbackData }
-      const sessionKey = await this.deriveSecureSessionKey(
-        spaceId,
-        activeSessionIds,
-      )
-      const { encryptedData, iv } = await encryptDeterministically(
-        JSON.stringify(fallbackData),
-        sessionKey,
-      )
+      
+      const payloadToEncrypt = JSON.stringify({ type: 'deterministic', ...fallbackData });
+      const sessionKey = await this.deriveSecureSessionKey(spaceId, activeSessionIds);
+      const { encryptedBuffer: finalEncryptedBuffer, iv: finalIv } = await encryptDeterministically(payloadToEncrypt, sessionKey);
+
       return {
         type: 'hybrid',
-        encryptedData,
-        iv,
+        encryptedData: ab2b64(finalEncryptedBuffer),
+        iv: ab2b64(finalIv),
         algorithm: 'AES-GCM-256',
         sessionParticipants: activeSessionIds,
         fallbackData: fallbackData,
       }
     },
+    
+    // [新規] ファイル専用の暗号化関数
+    async encryptFile(fileBuffer, spaceId, passphrase) {
+        const deterministicKey = await this.getOrCreateSpaceKey(spaceId, passphrase);
+        const { encryptedBuffer, iv } = await encryptDeterministically(fileBuffer, deterministicKey);
+
+        // DBに保存するペイロードには、復号に必要なIVのみ（Base64で）格納
+        const payloadForDb = {
+            type: 'file_deterministic', // ファイル用の新しいタイプ
+            iv: ab2b64(iv)
+        };
+        
+        return {
+            encryptedFileBuffer: encryptedBuffer, // アップロード用の暗号化済みバイナリ
+            payloadForDb: payloadForDb // DB保存用のペイロード
+        };
+    },
+    
+    // [修正] decryptMessageWithFallbackはテキスト専用
     async decryptMessageWithFallback(payload, spaceId) {
-      const deterministicKey = await this.getOrCreateSpaceKey(
-        spaceId,
-        passphraseCache.get(spaceId),
-      )
-      if (payload.type === 'hybrid') {
-        try {
-          const sessionKey = await this.deriveSecureSessionKey(
-            spaceId,
-            payload.sessionParticipants,
-          )
-          const decryptedPayloadJson = await decryptDeterministically(
-            payload.encryptedData,
-            payload.iv,
-            sessionKey,
-          )
-          const innerPayload = JSON.parse(decryptedPayloadJson)
-          return await decryptDeterministically(
-            innerPayload.encryptedData,
-            innerPayload.iv,
-            deterministicKey,
-          )
-        } catch (hybridError) {
-          console.warn(
-            'ハイブリッド復号化に失敗。フォールバックします。',
-            hybridError.message,
-          )
-          return await decryptDeterministically(
-            payload.fallbackData.encryptedData,
-            payload.fallbackData.iv,
-            deterministicKey,
-          )
+        // ... (この関数は前回の修正から変更なし)
+        const deterministicKey = await this.getOrCreateSpaceKey(spaceId, passphraseCache.get(spaceId));
+        if (payload.type === 'hybrid') {
+          try {
+            const sessionKey = await this.deriveSecureSessionKey(spaceId, payload.sessionParticipants);
+            const decryptedPayloadJson = await decryptDeterministically(payload.encryptedData, payload.iv, sessionKey, true);
+            const innerPayload = JSON.parse(decryptedPayloadJson);
+            return await decryptDeterministically(innerPayload.encryptedData, innerPayload.iv, deterministicKey, true);
+          } catch (hybridError) {
+            console.warn('ハイブリッド復号化に失敗。フォールバックします。', hybridError.message);
+            return await decryptDeterministically(payload.fallbackData.encryptedData, payload.fallbackData.iv, deterministicKey, true);
+          }
+        } else {
+          return await decryptDeterministically(payload.encryptedData, payload.iv, deterministicKey, true);
         }
-      } else {
-        return await decryptDeterministically(
-          payload.encryptedData,
-          payload.iv,
-          deterministicKey,
-        )
-      }
     },
 
-    // [追加] 退出時に呼ばれるクリーンアップ関数
+    async decryptFile(encryptedFileBuffer, payload, spaceId) {
+        const deterministicKey = await this.getOrCreateSpaceKey(spaceId, passphraseCache.get(spaceId));
+        const iv = payload.iv; // ファイル用のペイロードから直接ivを取得
+        if (!iv) throw new Error('復号化に必要なIVがペイロード内に見つかりません。');
+        
+        const decryptedBuffer = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b642ab(iv) }, deterministicKey, encryptedFileBuffer);
+        return decryptedBuffer;
+    },
+
     forceCleanupSpaceKey: function (spaceId) {
-      spaceKeys.delete(spaceId)
-      passphraseCache.delete(spaceId)
-      console.log(
-        `[Crypto] 空間[${spaceId}]のキー情報をクリーンアップしました。`,
-      )
+      spaceKeys.delete(spaceId);
+      passphraseCache.delete(spaceId);
     },
-
     _clearCache: function () {
-      spaceKeys.clear()
-      passphraseCache.clear()
+      spaceKeys.clear();
+      passphraseCache.clear();
     },
   }
 })()

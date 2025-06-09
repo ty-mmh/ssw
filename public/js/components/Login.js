@@ -18,8 +18,8 @@ window.LoginComponent = ({
       React.createElement(
         'div', { className: 'text-center mb-8' },
         React.createElement(Shield, { className: 'w-16 h-16 mx-auto text-primary animate-subtle-pulse' }),
-        React.createElement('h1', { className: 'text-3xl font-bold mt-4 text-gray-100' }, 'セキュアチャット'),
-        React.createElement('p', { className: 'text-gray-400' }, 'FRIENDLYモード')
+        React.createElement('h1', { className: 'text-3xl font-bold mt-4 text-gray-100' }, 'Secure Space'),
+        React.createElement('p', { className: 'text-gray-400' }, 'in the word')
       ),
       React.createElement(
         'div', { className: 'glass-pane p-6 sm:p-8 rounded-2xl' },

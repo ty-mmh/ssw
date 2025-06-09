@@ -1,6 +1,9 @@
 // public/js/modules/api.js
 ;(function () {
   'use strict'
+  
+  let currentPassphrase = null;
+
   async function call(endpoint, options = {}) {
     try {
       const response = await fetch(`/api${endpoint}`, {
@@ -11,21 +14,23 @@
       if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`)
       return data
     } catch (error) {
-      // ErrorHandlerが利用可能であれば、エラーを報告
       if (window.ErrorHandler) {
         window.ErrorHandler.report('api', error.message, { endpoint })
       }
-      throw error // エラーを再スローして呼び出し元に伝える
+      throw error
     }
   }
 
   window.API = {
+    setPassphraseForApi(passphrase) {
+        currentPassphrase = passphrase;
+    },
+
     async enterSpace(passphrase) {
       const { space } = await call('/spaces/enter', {
         method: 'POST',
         body: JSON.stringify({ passphrase }),
       })
-      // 空間キーの生成をCryptoモジュールに依頼
       await window.Crypto.getOrCreateSpaceKey(space.id, passphrase)
       return space
     },
@@ -36,16 +41,17 @@
       })
     },
     async sendMessageFriendly(spaceId, message) {
-      // 依存モジュールから必要な情報を取得
       const activeSessionIds =
         window.SessionManager.getActiveSessionsForSpace(spaceId)
-      const encryptedPayload = await window.Crypto.encryptMessageHybrid(
+      
+      // [修正] テキスト専用の暗号化関数を呼び出す
+      const encryptedPayload = await window.Crypto.encryptMessage(
         message,
         spaceId,
         activeSessionIds,
+        currentPassphrase
       )
 
-      // サーバーに送信
       const { message: serverMessage } = await call('/messages/create', {
         method: 'POST',
         body: JSON.stringify({
@@ -53,31 +59,88 @@
           message: '[ENCRYPTED]',
           encrypted: true,
           encryptedPayload,
+          messageType: 'text',
         }),
       })
-      // フロントエンドで扱いやすいようにタイムスタンプをDateオブジェクトに変換
       return {
         ...serverMessage,
         text: message,
         timestamp: new Date(serverMessage.timestamp),
       }
     },
+
+    async sendMediaMessage(spaceId, file, messageType) {
+        const fileBuffer = await file.arrayBuffer();
+
+        // [修正] ファイル専用の暗号化関数を呼び出し、責務を分離
+        const { encryptedFileBuffer, payloadForDb } = await window.Crypto.encryptFile(
+            fileBuffer,
+            spaceId,
+            currentPassphrase
+        );
+
+        const encryptedFileBlob = new Blob([encryptedFileBuffer], { type: file.type });
+        const uploadedFileInfo = await this.uploadFile(encryptedFileBlob, file.name);
+
+        const metadata = {
+            name: file.name,
+            type: file.type,
+            size: file.size
+        };
+
+        const { message: serverMessage } = await call('/messages/create', {
+            method: 'POST',
+            body: JSON.stringify({
+                spaceId,
+                message: uploadedFileInfo.filePath,
+                encrypted: true,
+                encryptedPayload: payloadForDb, // DBにはIVなど最低限の情報を保存
+                messageType: messageType,
+                metadata: metadata,
+            }),
+        });
+        
+        // ローカルでの再生に必要な完全なペイロードを返す
+        return {
+            ...serverMessage,
+            text: `[${messageType === 'image' ? '画像' : '音声'}] ${file.name}`,
+            timestamp: new Date(serverMessage.timestamp),
+            encrypted_payload: payloadForDb,
+        };
+    },
+
     async loadMessagesFriendly(spaceId) {
       const { messages } = await call(`/messages/${spaceId}`)
+      
       return await Promise.all(
         messages.map(async (msg) => {
           const messageWithDate = { ...msg, timestamp: new Date(msg.timestamp) }
-          // encrypted_payloadは、サーバーのAPIレスポンスでパース済みのオブジェクトとして返される想定
           if (msg.encrypted && msg.encrypted_payload) {
-            try {
-              messageWithDate.text =
-                await window.Crypto.decryptMessageWithFallback(
-                  msg.encrypted_payload,
-                  spaceId,
-                )
-            } catch (e) {
-              messageWithDate.text = `[復号化に失敗しました]`
-              messageWithDate.encryptionType = 'error'
+            if (msg.message_type === 'image' || msg.message_type === 'audio') {
+                try {
+                    const response = await fetch(msg.encrypted_content);
+                    if (!response.ok) throw new Error('ファイルの取得に失敗しました。');
+                    const encryptedBuffer = await response.arrayBuffer();
+                    const decryptedBuffer = await window.Crypto.decryptFile(encryptedBuffer, msg.encrypted_payload, spaceId);
+                    const blob = new Blob([decryptedBuffer], { type: msg.metadata.type });
+                    messageWithDate.blobUrl = URL.createObjectURL(blob);
+                } catch(e) {
+                    console.error(`メディア(ID: ${msg.id})の読み込み・復号化に失敗:`, e);
+                    messageWithDate.text = `[メディアの読み込みに失敗しました]`;
+                    messageWithDate.isError = true;
+                }
+            } else {
+                try {
+                    messageWithDate.text =
+                      await window.Crypto.decryptMessageWithFallback(
+                        msg.encrypted_payload,
+                        spaceId
+                      );
+                } catch (e) {
+                  console.error(`メッセージ(ID: ${msg.id})の復号化に失敗:`, e);
+                  messageWithDate.text = `[復号化に失敗しました]`
+                  messageWithDate.isError = true;
+                }
             }
           }
           return messageWithDate
@@ -86,18 +149,22 @@
     },
     async uploadFile(fileData, fileName) {
       const formData = new FormData()
-      // 'file' というキーは、サーバー側の upload.single('file') と一致させる
       formData.append('file', fileData, fileName)
 
-      const response = await fetch('/api/files/upload', {
-        method: 'POST',
-        body: formData,
-        // multipart/form-data の場合、Content-Typeはブラウザが自動設定するので不要
-      })
-
-      const data = await response.json()
-      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`)
-      return data
+      try {
+        const response = await fetch('/api/files/upload', {
+            method: 'POST',
+            body: formData,
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+        return data;
+      } catch (error) {
+        if (window.ErrorHandler) {
+            window.ErrorHandler.report('upload', error.message, { fileName });
+        }
+        throw error;
+      }
     },
   }
 })()

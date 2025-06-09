@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>セキュアチャット - FRIENDLYモード</title>
+    <title>SSW</title>
 
     <link rel="icon" href="data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%233b82f6' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpath d='M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z'/%3e%3c/svg%3e">
     
@@ -56,6 +56,20 @@
             opacity: 0;
             transform: scale(0.95);
         }
+        .modal-content {
+          animation: modal-fade-in 0.2s ease-out forwards;
+        }
+        .modal-content.is-exiting {
+          animation: modal-fade-out 0.2s ease-in forwards;
+        }
+        @keyframes modal-fade-in {
+          from { opacity: 0; transform: scale(0.95); }
+          to { opacity: 1; transform: scale(1); }
+        }
+        @keyframes modal-fade-out {
+          from { opacity: 1; transform: scale(1); }
+          to { opacity: 0; transform: scale(0.35); }
+        }
     </style>
 </head>
 <body class="bg-stone-950">
@@ -101,6 +115,9 @@
 
     <script src="/js/modules/ErrorHandler.js"></script>
     <script src="/js/components/UnifiedErrorDisplay.js"></script>
+
+    <script src="/js/components/AudioRecorderModal.js"></script>
+    <script src="/js/components/ImageModal.js"></script>
     
     <script src="/js/components/enhanced/EncryptionStatus.js"></script>
     <script src="/js/components/enhanced/EnhancedMessageDisplay.js"></script>

@@ -4,11 +4,11 @@ console.log(
   '✨ FRIENDLYモード 拡張メッセージ表示コンポーネントを読み込んでいます...',
 )
 
-window.EnhancedMessageDisplay = ({ message, onRetryDecrypt }) => {
-  const { Lock, Key, Users, Clock, Trash2, AlertCircle } = window.Icons
+window.EnhancedMessageDisplay = ({ message, onOpenImageModal }) => {
+  const { Lock, Key, Users, Clock, Trash2, AlertCircle, Image } = window.Icons
   const { formatTime, getMessageTimeRemaining } = window.Utils
 
-  const isError = message.encryptionType === 'error'
+  const isError = message.isError; // [修正]
   const timeRemaining = getMessageTimeRemaining(message.expires_at)
 
   const getEncryptionIcon = () => {
@@ -37,6 +37,41 @@ window.EnhancedMessageDisplay = ({ message, onRetryDecrypt }) => {
         })
     }
   }
+  
+  const renderMessageContent = () => {
+    // [修正] ローディング表示をスピナーに変更
+    if (message.isLoading) {
+        return React.createElement('div', { className: 'flex items-center justify-center p-4 border-2 border-dashed border-gray-600 rounded-lg mt-2' },
+            React.createElement('div', { className: 'w-6 h-6 border-2 border-gray-400 border-t-transparent rounded-full animate-spin' })
+        );
+    }
+    if (isError) {
+        return React.createElement('div', { className: 'text-red-400' }, message.text || '[エラーが発生しました]');
+    }
+
+    if (message.message_type === 'image' && message.blobUrl) {
+      return React.createElement('img', { 
+          src: message.blobUrl, 
+          alt: message.metadata?.name || '投稿画像',
+          className: 'max-w-full max-h-96 rounded-lg mt-2 cursor-pointer transition hover:opacity-80',
+          onClick: () => onOpenImageModal(message.blobUrl)
+      });
+    }
+    
+    if (message.message_type === 'audio' && message.blobUrl) {
+        return React.createElement('audio', {
+            controls: true,
+            src: message.blobUrl,
+            className: 'w-full max-w-xs'
+        });
+    }
+
+    return React.createElement(
+        'pre',
+        { className: `text-gray-100 leading-relaxed whitespace-pre-wrap font-sans break-words flex-1`},
+        message.text,
+      );
+  }
 
   return React.createElement(
     'article',
@@ -47,15 +82,13 @@ window.EnhancedMessageDisplay = ({ message, onRetryDecrypt }) => {
       'div',
       { className: 'flex items-start justify-between gap-3' },
       React.createElement(
-        'pre',
-        {
-          className: `text-gray-100 leading-relaxed whitespace-pre-wrap font-sans break-words flex-1 ${isError ? 'italic text-red-300' : ''}`,
-        },
-        message.text,
+        'div',
+        { className: 'flex-1 min-w-0' },
+        renderMessageContent()
       ),
       React.createElement(
         'div',
-        { className: 'text-xs text-gray-400 text-right' },
+        { className: 'text-xs text-gray-400 text-right flex-shrink-0' },
         React.createElement(
           'div',
           { className: 'flex items-center gap-1.5 justify-end mb-1' },
@@ -78,16 +111,6 @@ window.EnhancedMessageDisplay = ({ message, onRetryDecrypt }) => {
         ),
       ),
     ),
-    isError &&
-      onRetryDecrypt &&
-      React.createElement(
-        'button',
-        {
-          onClick: () => onRetryDecrypt(message),
-          className: 'mt-2 text-xs text-blue-400 hover:underline',
-        },
-        '復号化を再試行',
-      ),
   )
 }
 

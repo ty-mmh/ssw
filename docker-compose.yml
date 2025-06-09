@@ -32,6 +32,8 @@ services:
       # メッセージの有効期限（時間）。デフォルトは48時間。
       # 例: '0.02' (約1.2分)
       - MESSAGE_EXPIRY_HOURS=0.02
+      # アップロードファイルの最大サイズ (MB)
+      - MAX_FILE_SIZE_MB=1
     depends_on:
       # db-setupサービスが完了してから起動
       db-setup:
