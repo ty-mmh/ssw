@@ -27,4 +27,14 @@ describe('CDK infrastructure definition', () => {
     expect(stackSource).toContain("exclude: ['uploads/*', 'uploads/**']")
     expect(stackSource).toContain("httpFunction.addEnvironment('PUBLIC_WS_URL'")
   })
+
+  test('passes APP_SECRET parameter name instead of a secure dynamic reference', () => {
+    expect(stackSource).toContain("require('aws-cdk-lib/aws-ssm')")
+    expect(stackSource).toContain('APP_SECRET_PARAMETER_NAME')
+    expect(stackSource).toContain('fromSecureStringParameterAttributes')
+    expect(stackSource).toContain('appSecretParameter.grantRead(httpFunction)')
+    expect(stackSource).toContain("'@aws-sdk/client-ssm'")
+    expect(stackSource).not.toContain('ssmSecure')
+    expect(stackSource).not.toContain('{{resolve:ssm-secure:/ssw/app-secret}}')
+  })
 })

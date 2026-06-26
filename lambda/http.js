@@ -9,6 +9,10 @@ const {
 } = require('../utils/http-response')
 const { isInvalidFileRequest } = require('../utils/file-validation')
 const { storageKeyHasActiveMessage } = require('../services/file-download-service')
+const {
+  resolveAppSecret,
+  resetAppSecretCacheForTesting,
+} = require('../utils/app-secret-resolver')
 
 let cachedContext
 
@@ -35,12 +39,14 @@ async function handler(event) {
     return jsonResponse(204, {})
   }
 
-  const method = event.requestContext?.http?.method || event.httpMethod
-  const routeKey = event.routeKey || `${method} ${event.rawPath || event.path}`
-  const path = event.rawPath || event.path || ''
-  const { spaceService, messageService, stores } = getContext()
-
   try {
+    await resolveAppSecret()
+
+    const method = event.requestContext?.http?.method || event.httpMethod
+    const routeKey = event.routeKey || `${method} ${event.rawPath || event.path}`
+    const path = event.rawPath || event.path || ''
+    const { spaceService, messageService, stores } = getContext()
+
     if (method === 'GET' && path === '/api/config') {
       return jsonResponse(200, {
         success: true,
@@ -128,6 +134,7 @@ function resetForTesting() {
     cachedContext.stores.db.close()
   }
   cachedContext = null
+  resetAppSecretCacheForTesting()
 }
 
 module.exports = {

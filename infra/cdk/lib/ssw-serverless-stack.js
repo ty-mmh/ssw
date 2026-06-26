@@ -11,6 +11,7 @@ const lambda = require('aws-cdk-lib/aws-lambda')
 const nodejs = require('aws-cdk-lib/aws-lambda-nodejs')
 const s3 = require('aws-cdk-lib/aws-s3')
 const s3deploy = require('aws-cdk-lib/aws-s3-deployment')
+const ssm = require('aws-cdk-lib/aws-ssm')
 
 class SswServerlessStack extends cdk.Stack {
   constructor(scope, id, props) {
@@ -65,7 +66,15 @@ class SswServerlessStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.RETAIN,
     })
 
-    const appSecret = cdk.SecretValue.ssmSecure('/ssw/app-secret').unsafeUnwrap()
+    const appSecretParameterName = '/ssw/app-secret'
+    const appSecretParameter =
+      ssm.StringParameter.fromSecureStringParameterAttributes(
+        this,
+        'AppSecretParameter',
+        {
+          parameterName: appSecretParameterName,
+        },
+      )
 
     const repoRoot = path.join(__dirname, '..', '..', '..')
     const lambdaBundling = {
@@ -74,6 +83,7 @@ class SswServerlessStack extends cdk.Stack {
         '@aws-sdk/client-apigatewaymanagementapi',
         '@aws-sdk/client-dynamodb',
         '@aws-sdk/client-s3',
+        '@aws-sdk/client-ssm',
         '@aws-sdk/lib-dynamodb',
         '@aws-sdk/s3-presigned-post',
         '@aws-sdk/s3-request-presigner',
@@ -95,12 +105,13 @@ class SswServerlessStack extends cdk.Stack {
         CONNECTIONS_TABLE: connectionsTable.tableName,
         CONNECTIONS_SPACE_INDEX: 'spaceId-index',
         UPLOADS_BUCKET: uploadsBucket.bucketName,
-        APP_SECRET: appSecret,
+        APP_SECRET_PARAMETER_NAME: appSecretParameterName,
       },
     })
 
     spacesTable.grantReadWriteData(httpFunction)
     messagesTable.grantReadWriteData(httpFunction)
+    appSecretParameter.grantRead(httpFunction)
     httpFunction.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ['s3:GetObject', 's3:PutObject'],

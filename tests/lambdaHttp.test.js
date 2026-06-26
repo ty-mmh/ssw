@@ -23,6 +23,7 @@ describe('Lambda HTTP handler', () => {
       // Module may not have been required if a test fails before loading it.
     }
     process.env = originalEnv
+    jest.dontMock('@aws-sdk/client-ssm')
     fs.rmSync(tempDir, { recursive: true, force: true })
   })
 
@@ -39,6 +40,28 @@ describe('Lambda HTTP handler', () => {
     )
     expect(enterResponse.statusCode).toBe(200)
     expect(enterResponse.body).not.toContain('room')
+  })
+
+  test('resolves APP_SECRET from SSM parameter before creating services', async () => {
+    delete process.env.APP_SECRET
+    process.env.APP_SECRET_PARAMETER_NAME = '/ssw/app-secret'
+    const ssm = mockSsm({ Parameter: { Value: 'lambda-ssm-secret' } })
+    const { handler } = require('../lambda/http')
+
+    const createResponse = await handler(
+      event('POST', '/api/spaces/create', { passphrase: 'room' }),
+    )
+    expect(createResponse.statusCode).toBe(201)
+    expect(process.env.APP_SECRET).toBe('lambda-ssm-secret')
+
+    const enterResponse = await handler(
+      event('POST', '/api/spaces/enter', { passphrase: 'room' }),
+    )
+    expect(enterResponse.statusCode).toBe(200)
+    expect(ssm.GetParameterCommand).toHaveBeenCalledWith({
+      Name: '/ssw/app-secret',
+      WithDecryption: true,
+    })
   })
 
   test('creates and lists messages through Lambda shape', async () => {
@@ -131,4 +154,17 @@ function event(method, rawPath, body) {
     rawPath,
     body: JSON.stringify(body),
   }
+}
+
+function mockSsm(response) {
+  const send = jest.fn().mockResolvedValue(response)
+  const SSMClient = jest.fn(() => ({ send }))
+  const GetParameterCommand = jest.fn(function GetParameterCommand(input) {
+    this.input = input
+  })
+  jest.doMock('@aws-sdk/client-ssm', () => ({
+    SSMClient,
+    GetParameterCommand,
+  }))
+  return { send, SSMClient, GetParameterCommand }
 }
