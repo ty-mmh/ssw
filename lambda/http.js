@@ -7,6 +7,8 @@ const {
   jsonResponse,
   parseJsonBody,
 } = require('../utils/http-response')
+const { isInvalidFileRequest } = require('../utils/file-validation')
+const { storageKeyHasActiveMessage } = require('../services/file-download-service')
 
 let cachedContext
 
@@ -86,6 +88,12 @@ async function handler(event) {
       if (!storageKey) {
         return jsonResponse(400, { success: false, error: 'key is required.' })
       }
+      if (!(await storageKeyHasActiveMessage(stores.messageStore, storageKey))) {
+        return jsonResponse(404, {
+          success: false,
+          error: 'storage key was not found.',
+        })
+      }
       const result = await stores.fileStore.createPresignedDownload(storageKey)
       return jsonResponse(200, { success: true, ...result })
     }
@@ -95,13 +103,19 @@ async function handler(event) {
       error: `No route for ${routeKey}`,
     })
   } catch (error) {
-    console.error('lambda http handler error', { error: error.message })
     if (error.code === 'INVALID_SINCE') {
       return jsonResponse(400, {
         success: false,
         error: 'since timestamp is invalid.',
       })
     }
+    if (isInvalidFileRequest(error)) {
+      return jsonResponse(400, {
+        success: false,
+        error: error.message,
+      })
+    }
+    console.error('lambda http handler error', { error: error.message })
     return jsonResponse(500, {
       success: false,
       error: 'サーバーエラーが発生しました。',

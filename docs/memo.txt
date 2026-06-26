@@ -1,288 +1,164 @@
-結論から言うと、**AWSサーバレス移行は可能。ただし、今の `server.js` をそのまま Lambda に載せる移行ではなく、ほぼ「永続化層とリアルタイム層の置き換え」になる**。
+確認した。結論としては、方向性はかなり良い。ただし、まだ AWS に deploy してよい段階ではない。特に Lambda 起動時に落ちる可能性が高い箇所 がある。
 
-理由は、現在の ssw がかなり明確に「常駐 Node サーバー」前提だから。
+総評
 
-* `express` + `http.createServer` + `socket.io` で常駐サーバーを立てている。
-* SQLite を `secure_chat.db` としてローカルファイルに持っている。
-* ファイルアップロードは `public/uploads` にローカル保存している。
-* 参加者管理も `activeSessions = new Map()` でプロセス内メモリに保持している。
-* フロント側も `io()` で Socket.IO 接続している。
+Codex / Claude Code の対応で、以前の「Raspberry Pi 常駐 Express + Socket.IO + SQLite + local uploads」から、かなり明確に AWS サーバレス寄りへ切られている。
 
-Lambda は一応 `/tmp` を持つけど、これは実行環境ごとの一時領域で、永続DBやアップロード保存先としては使わない方がいい。AWS のドキュメントでも `/tmp` は temporary かつ execution environment ごとだと説明されている。([AWS ドキュメント][1])
+良い変更としては、AWS SDK 依存が追加され、DynamoDB / S3 / API Gateway Management API へ寄せる準備が入っている。socket.io 依存も package から外れている。
 
-## 推奨構成
+server.js もかなり整理されていて、store / service / route の境界ができ、以前の Socket.IO 常駐ロジックは消えている。
 
-いちばん現実的なのはこれ。
+合言葉の平文保存をやめて HMAC hash 化する方向も入っている。createSpace では passphraseHash を作って保存し、レスポンスから passphrase / passphraseHash を落とす sanitizeSpace も入っている。
 
-```text
-Browser
-  |
-  |  static files
-  v
-CloudFront + S3
-  |
-  | /api/*
-  v
-Lambda Function URL or API Gateway HTTP API
-  |
-  v
-DynamoDB
-  |
-  v
-S3 uploads
+DynamoDB / S3 / WebSocket / Budget まで CDK に入っているのも良い。DynamoDB は Spaces, Messages, Connections に分かれていて、messages / connections には TTL が入っている。 S3 uploads bucket も public block / encryption / SSL / lifecycle 付き。 Budget guard も入っている。
 
-Browser
-  |
-  | native WebSocket
-  v
-API Gateway WebSocket API
-  |
-  v
-Lambda handlers
-  |
-  v
-DynamoDB connection/session table
-```
+最優先で直すべき点
 
-つまり、分解するとこう。
+1. Lambda が better-sqlite3 require で落ちる可能性が高い
 
-| 現在                               | AWS移行後                                   |
-| -------------------------------- | ---------------------------------------- |
-| Express HTTP API                 | Lambda HTTP handler                      |
-| Socket.IO                        | API Gateway WebSocket + native WebSocket |
-| SQLite `secure_chat.db`          | DynamoDB                                 |
-| `activeSessions` Map             | DynamoDB の connections / memberships     |
-| `public/uploads`                 | S3                                       |
-| `setInterval` cleanup            | DynamoDB TTL + 必要なら EventBridge cleanup  |
-| Raspberry Pi + Cloudflare Tunnel | CloudFront / API Gateway / Lambda        |
+ここが最大のブロッカー。
 
-AWS Lambda はリクエスト数と実行時間ベース課金で、無料枠として月 100万リクエストと 400,000 GB秒がある。([Amazon Web Services, Inc.][2]) API Gateway WebSocket は「メッセージ数」と「接続分数」に課金される方式で、WebSocket 無料枠もあるが、新規AWSアカウント向け・12か月条件がある。([Amazon Web Services, Inc.][3]) 低頻度の身内利用ならかなり小さい金額に収まる可能性が高い。
+storage/create-stores.js が top-level で better-sqlite3 を require している。 一方で CDK の Lambda bundling では better-sqlite3 を external にしている。
 
-## 重要な判断点
+つまり、Lambda では STORAGE_DRIVER=dynamodb なので SQLite を使わないつもりでも、require('../storage/create-stores') した時点で better-sqlite3 が必要になり、cold start で Cannot find module 'better-sqlite3' になる可能性が高い。
 
-### 1. Socket.IO は捨てるのがよい
+修正方針は、better-sqlite3 を SQLite 分岐内へ遅延 require すること。
 
-Lambda + API Gateway WebSocket は **Socket.IO 互換ではない**。今の `io()` / `socket.emit()` / `socket.on()` の発想を、次のような native WebSocket メッセージに変える。
+// NG: top-level
+const Database = require('better-sqlite3')
 
-```js
-ws.send(JSON.stringify({
-  action: 'joinSpace',
-  spaceId
-}))
-```
-
-API Gateway WebSocket は、JSON の `action` などを route selection expression にしてバックエンドを呼び分ける構造を取れる。([AWS ドキュメント][4]) 事前定義ルートとして `$connect`, `$disconnect`, `$default` があり、カスタムルートも作れる。([AWS ドキュメント][4])
-
-ただし API Gateway WebSocket は、**10分アイドルまたは最大2時間で切断される**ので、フロント側に reconnect が必要。([AWS ドキュメント][4])
-
-### 2. DynamoDB にはかなり相性がいい
-
-今のDBは実質この2テーブル。
-
-* `spaces`
-* `messages`
-
-初期化スクリプトでもそうなっている。
-
-DynamoDB ならこう切るのが自然。
-
-```text
-Table: Spaces
-PK: spaceId
-GSI: passphraseHash
-
-Table: Messages
-PK: spaceId
-SK: timestamp#messageId
-attributes:
-  encrypted_content
-  encrypted_payload
-  message_type
-  metadata
-  expiresAtEpoch
-
-Table: Connections
-PK: connectionId
-GSI: spaceId
-attributes:
-  sessionId
-  spaceId
-  publicKey
-  expiresAtEpoch
-```
-
-DynamoDB TTL を使えば、期限切れメッセージや接続情報を自動削除できる。ただし TTL は「期限到達後すぐ削除」ではなく、通常は数日以内に削除される仕様なので、`Query` 時には `expiresAtEpoch > now` でフィルタする前提にするのが安全。([AWS ドキュメント][5])
-
-DynamoDB は無料枠がかなり強く、25 WCU / 25 RCU / 25GB などがある。個人・プロトタイプ規模なら provisioned capacity の小さめ設定でほぼ無料枠内に入る見込み。([Amazon Web Services, Inc.][6])
-
-### 3. ファイルは S3 presigned URL 方式へ
-
-現在は `multer.diskStorage` で `public/uploads` に保存し、そのパスを返している。
-
-AWSではこれはやめて、
-
-1. Lambda が `PUT` 用 presigned URL を発行
-2. ブラウザが暗号化済み Blob を S3 に直接アップロード
-3. メッセージには `s3Key` を保存
-4. 表示時は `GET` 用 presigned URL か CloudFront 経由で取得
-
-にするのがよい。S3 presigned URL は private object に対して期限付きアクセスを渡せる仕組みとして AWS 公式に説明されている。([AWS ドキュメント][7])
-
-なお、API Gateway WebSocket は binary media type をサポートしないので、画像・音声は WebSocket に流さず、HTTP/S3 経由に分けるのが正解。([AWS ドキュメント][4])
-
-## 移行の最小ステップ
-
-### Phase 1: まずHTTP APIだけLambda化
-
-Socket.IOは一旦残さず、最低限これを移植する。
-
-* `/api/config`
-* `/api/spaces/create`
-* `/api/spaces/enter`
-* `/api/messages/:spaceId`
-* `/api/messages/create`
-* `/api/files/presign-upload`
-
-この時点でリアルタイム性は落ちるが、数秒ポーリングでもチャットとしては動く。まずRaspberry Pi依存を外すならこのルートが一番安全。
-
-### Phase 2: DynamoDB化
-
-`better-sqlite3` を外し、DynamoDB DocumentClient に置き換える。
-
-現在の `package.json` は `better-sqlite3`, `express`, `socket.io`, `multer` に依存している。 AWS版では少なくとも以下に置き換える。
-
-```json
-{
-  "dependencies": {
-    "@aws-sdk/client-dynamodb": "...",
-    "@aws-sdk/lib-dynamodb": "...",
-    "@aws-sdk/client-s3": "...",
-    "@aws-sdk/s3-request-presigner": "...",
-    "@aws-sdk/client-apigatewaymanagementapi": "..."
-  }
+// OK: sqlite branch only
+if (storageDriver !== 'dynamodb') {
+  const Database = require('better-sqlite3')
+  db = db || new Database(env.SQLITE_DB_PATH || 'secure_chat.db')
 }
-```
 
-### Phase 3: WebSocketをAPI Gateway化
+これは即修正でよい。
 
-ルートはこのくらい。
+2. Static hosting のデプロイが未完成に見える
 
-```text
-$connect
-$disconnect
-joinSpace
-newMessage
-publicKeyAnnouncement
-```
+CDK では static bucket と CloudFront distribution は作られている。 ただ、public/ を S3 にアップロードする BucketDeployment 的な定義が見当たらない。
 
-現在の Socket.IO イベント対応はそのまま写せる。
+このままだと、インフラは立っても CloudFront の origin bucket が空で、アプリ本体が配信されない可能性がある。
 
-| 現在のイベント                   | AWS WebSocket action    |
-| ------------------------- | ----------------------- |
-| `join-space`              | `joinSpace`             |
-| `new-message`             | `newMessage`            |
-| `public-key-announcement` | `publicKeyAnnouncement` |
-| `disconnect`              | `$disconnect`           |
+追加するなら：
 
-ただし `$disconnect` は best-effort で、必ず届くとは限らない。AWS のドキュメントにも `$disconnect` は保証されないと書かれているので、Connections テーブルには TTL を持たせるべき。([AWS ドキュメント][8])
+const s3deploy = require('aws-cdk-lib/aws-s3-deployment')
 
-### Phase 4: フロント差し替え
+new s3deploy.BucketDeployment(this, 'DeployStaticAssets', {
+  sources: [s3deploy.Source.asset(path.join(repoRoot, 'public'))],
+  destinationBucket: staticBucket,
+  distribution,
+})
 
-今は `index.html` で Socket.IO クライアントを読み込んでいる。 これを消して、native WebSocket 接続に変える。
+3. S3 直接アップロード用 CORS が足りない
 
-```js
-const ws = new WebSocket(window.SSW_WS_URL)
+フロントは presigned POST を受け取り、ブラウザから S3 に直接 fetch(presign.uploadUrl, { method: 'POST', body: formData }) している。 S3 側も presigned POST を返す実装になっている。
 
-ws.onopen = () => {
-  ws.send(JSON.stringify({
-    action: 'joinSpace',
-    spaceId: currentSpace.id
-  }))
-}
-```
+ただ、uploads bucket 定義に CORS が見当たらない。 ブラウザ直アップロードは CORS で詰まる可能性が高い。
 
-`public/js/modules/api.js` は `/api` 同一オリジン前提なので、CloudFront で `/api/*` を Lambda 側に振れば大きく変えずに済む。
+最小なら uploads bucket にこれを足す。
 
-## セキュリティ面で直したいところ
+cors: [{
+  allowedMethods: [s3.HttpMethods.POST, s3.HttpMethods.GET],
+  allowedOrigins: ['*'],
+  allowedHeaders: ['*'],
+}]
 
-移行ついでに、ここは直した方がいい。
+後で CloudFront domain に絞ればよい。
 
-まず、現在は `spaces.passphrase` をそのままDB保存している。`routes/spaces.js` でも `WHERE passphrase = ?` で検索している。 作成時も `passphrase` をそのまま insert している。
+4. WebSocket URL がフロントに渡っていない
 
-AWS化するなら、最低でもこうする。
+CDK は WebSocket API を作って output している。 しかし、フロントの runtime-config.js は wsUrl: '' のまま。 /api/config も PUBLIC_WS_URL を返す設計だけど、HTTP Lambda の environment に PUBLIC_WS_URL が入っていない。
 
-```text
-passphraseHash = HMAC-SHA256(APP_SECRET, normalizedPassphrase)
-```
+なので、現状 AWS 版では WebSocket が有効化されず、polling fallback で動く形になるはず。これは「段階移行」としてはあり。ただし WebSocket まで動かしたいなら CDK で以下を追加する必要がある。
 
-DynamoDB には `passphraseHash` だけ置く。合言葉そのものは保存しない。
+httpFunction.addEnvironment('PUBLIC_WS_URL', websocketStage.url)
 
-あと、`/api/messages/create` で受信body全体をログ出力している。 Lambdaでは CloudWatch Logs に乗るので、暗号化済みとはいえ message body のログは削るべき。CloudWatch Logs は無料枠がある一方で、超過するとログ量に応じて課金される。([Amazon Web Services, Inc.][9])
+HTTP API を CloudFront 経由にするなら PUBLIC_API_BASE_URL は空でもよい。
 
-## コスト感
+5. WebSocket 経由の media 受信が S3 で壊れる
 
-低頻度の個人・身内利用なら、かなり安いはず。
+通常の履歴取得では、S3 key を presigned download URL に解決してから fetch している。
 
-目安としては：
+一方、WebSocket で image/audio を受けた時は receivedMessage.encrypted_content をそのまま fetch している。 AWS 版では encrypted_content に S3 key が入るため、この経路だけメディア表示に失敗する。
 
-| 項目                    | 見込み                                      |
-| --------------------- | ---------------------------------------- |
-| Lambda                | 無料枠内の可能性が高い                              |
-| DynamoDB              | provisioned 最小なら無料枠内の可能性が高い              |
-| API Gateway WebSocket | 接続時間とメッセージ数次第だが、小規模なら数円〜数十円級の可能性         |
-| S3                    | アップロード容量次第。小容量ならかなり小さい                   |
-| CloudFront            | Free plan / 無料枠や小規模利用なら低額。ただし設定とプラン確認は必要 |
+ここは WebSocket 受信側でも resolveDownloadUrl 相当を使う必要がある。
 
-CloudFront は現在 $0/month の Free plan があり、1M requests、100GB data transfer、5GB S3 storage が記載されている。([Amazon Web Services, Inc.][10]) ただし AWS はサービスごとの無料枠・アカウント作成時期・プラン選択で条件が変わるので、**Billing alarm と Budget は必須**。
+6. presign API の入力検証が弱い
 
-## 私ならこう進める
+Express route 側では /presign-upload に spaceId / messageId 必須チェックがある。 しかし Lambda HTTP handler では body をそのまま createPresignedUpload に渡している。
 
-最初から完全リアルタイムを移植しようとすると重い。なので、順番はこう。
+また /presign-download は任意の key を受けて署名URLを返す。 S3 key はランダムなので即致命的ではないが、少なくとも spaces/... prefix のみ許可する、.. や空文字を弾く、可能なら message record と照合する、くらいは入れたい。
 
-1. **SQLite → DynamoDB**
-2. **uploads → S3 presigned URL**
-3. **HTTP API → Lambda Function URL / HTTP API**
-4. **フロント静的配信 → S3 + CloudFront**
-5. 最後に **Socket.IO → API Gateway WebSocket**
+運用上の注意
 
-リアルタイムは最後でよい。なぜなら、現在のアプリの本質は「合言葉空間」「E2EE風の暗号化メッセージ」「期限付きメッセージ」「画像/音声」で、リアルタイムは体験品質ではあるけれど、永続化移行より後回しにできるから。
+APP_SECRET はローカルでは default secret に落ちる。 AWS では /ssw/app-secret の secure SSM parameter を読む想定になっている。
 
-Codexに渡すなら、最初のチケットはこれがよさそう。
+移行スクリプトも getAppSecret() を使って既存 passphrase を hash 化する。 なので、Raspberry Pi の既存データを AWS に移す時は、必ず AWS 本番と同じ APP_SECRET で dry-run / migration する必要がある。ここを間違えると、移行後に既存の合言葉で入れなくなる。
 
-```md
-# Migrate ssw storage layer from SQLite/local uploads to AWS-ready adapters
+あと、scripts/setup-database.js は既存 DB を削除する。 Raspberry Pi 本番環境で誤って打つと危険なので、ファイル名か警告を強めてもよい。
 
-## Goal
-Prepare the app for AWS serverless deployment by removing assumptions on local SQLite, local uploaded files, and process-local session state.
+CI / テストについて
 
-## Scope
-- Introduce a storage abstraction:
-  - spaces
-  - messages
-  - files
-  - sessions/connections
-- Keep current SQLite implementation for local dev.
-- Add DynamoDB implementation for AWS.
-- Replace plaintext passphrase storage with HMAC-SHA256 passphraseHash.
-- Replace local file upload with S3 presigned upload/download flow.
-- Remove logging of request bodies containing message payloads.
-- Do not migrate Socket.IO yet.
+テストはかなり増えているけど、最新 commit に対する GitHub workflow run は見当たらなかった。 package には npm test がある。
 
-## Non-goals
-- Do not implement API Gateway WebSocket in this issue.
-- Do not redesign the UI.
-- Do not change client-side encryption behavior except where S3 upload/download requires metadata changes.
-```
+最低限、GitHub Actions で以下を回すとよい。
 
-この順番なら、Raspberry Pi依存を外す道筋が見えるし、途中で壊れても「HTTP + polling版」として一度AWSに載せられる。完全版はその後に WebSocket を差し替えるのがいい。
+name: test
 
-[1]: https://docs.aws.amazon.com/lambda/latest/dg/configuration-ephemeral-storage.html "Configure ephemeral storage for Lambda functions - AWS Lambda"
-[2]: https://aws.amazon.com/lambda/pricing/ "AWS Lambda Pricing"
-[3]: https://aws.amazon.com/api-gateway/pricing/ "Amazon API Gateway Pricing"
-[4]: https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-websocket-api-overview.html "Overview of WebSocket APIs in API Gateway - Amazon API Gateway"
-[5]: https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/TTL.html "Using time to live (TTL) in DynamoDB - Amazon DynamoDB"
-[6]: https://aws.amazon.com/dynamodb/pricing/on-demand/ "Amazon DynamoDB Pricing | NoSQL Key-Value Database | Amazon Web Services"
-[7]: https://docs.aws.amazon.com/AmazonS3/latest/userguide/ShareObjectPreSignedURL.html "Sharing objects with presigned URLs - Amazon Simple Storage Service"
-[8]: https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-websocket-api-route-keys-connect-disconnect.html "Manage connected users and client apps: $connect and $disconnect routes - Amazon API Gateway"
-[9]: https://aws.amazon.com/cloudwatch/pricing/ "Amazon CloudWatch Pricing | Free Tier Available"
-[10]: https://aws.amazon.com/cloudfront/pricing/ "Amazon CloudFront CDN - Plans & Pricing - Try For Free"
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npm test
+      - run: npm --prefix infra/cdk ci
+      - run: npm --prefix infra/cdk run synth
+
+判定
+
+現状はこう。
+
+設計方向: 合っている
+ローカル互換: かなり維持されている
+HTTP Lambda: 形はできているが better-sqlite3 require がブロッカー
+DynamoDB: 方向は良い
+S3: 方向は良いが CORS / presign検証が不足
+WebSocket: handler はあるが frontend config 未接続、media受信に穴あり
+CDK: 土台は良いが static deploy と runtime config が未完成
+Raspberry Pi 停止: まだ早い
+
+次にやるなら、優先順はこれ。
+
+1. better-sqlite3 の lazy require 化
+
+
+2. uploads bucket CORS 追加
+
+
+3. static assets の BucketDeployment 追加
+
+
+4. PUBLIC_WS_URL の注入、または「初期AWS版は polling only」と明示
+
+
+5. WebSocket media 受信で presigned download 解決
+
+
+6. presign endpoint の入力検証
+
+
+7. GitHub Actions 追加
+
+
+
+ここまで通れば、HTTP + polling 版として AWS 検証に入れる段階になる。WebSocket はその次でいい。

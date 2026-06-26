@@ -51,9 +51,19 @@ describe('S3FileStore', () => {
     const store = new S3FileStore({ bucketName: 'uploads', s3Client: {} })
 
     await expect(
-      store.createPresignedDownload('spaces/s/messages/m/file.bin'),
+      store.createPresignedDownload(
+        'spaces/s/messages/m/0123456789abcdef0123456789abcdef.bin',
+      ),
     ).resolves.toEqual({ downloadUrl: 'https://download.example.test/file' })
     expect(getSignedUrl).toHaveBeenCalled()
+  })
+
+  test('rejects download keys outside generated upload prefixes', async () => {
+    const store = new S3FileStore({ bucketName: 'uploads', s3Client: {} })
+
+    await expect(
+      store.createPresignedDownload('https://example.test/file.bin'),
+    ).rejects.toMatchObject({ code: 'INVALID_FILE_REQUEST' })
   })
 
   test('builds hard-to-guess storage keys', () => {

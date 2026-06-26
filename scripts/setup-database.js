@@ -4,6 +4,7 @@ const fs = require('fs')
 const { hashPassphrase, getAppSecret } = require('../utils/passphrase')
 
 console.log('SSW local database setup started')
+console.warn('WARNING: db:setup recreates secure_chat.db and deletes existing local data.')
 
 const dbPath = path.join(__dirname, '..', 'secure_chat.db')
 

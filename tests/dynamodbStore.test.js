@@ -81,6 +81,50 @@ describe('DynamoDB stores', () => {
     )
   })
 
+  test('looks up active media messages before download signing', async () => {
+    const storageKey =
+      'spaces/space-1/messages/message-1/0123456789abcdef0123456789abcdef.png'
+    const client = {
+      send: jest.fn().mockResolvedValue({
+        Items: [
+          {
+            messageId: 'm1',
+            spaceId: 'space-1',
+            encryptedContent: storageKey,
+            timestamp: '2026-01-01T00:01:00.000Z',
+            expiresAt: '2026-01-02T00:01:00.000Z',
+            expiresAtEpoch: 1767312060,
+            isDeleted: 0,
+            encrypted: 1,
+            encryptedPayload: { type: 'file' },
+            messageType: 'image',
+          },
+        ],
+      }),
+    }
+    const store = new DynamoDbMessageStore({
+      tableName: 'Messages',
+      documentClient: client,
+    })
+
+    const message = await store.findActiveMediaMessageByStorageKey(storageKey, {
+      now: new Date('2026-01-01T00:30:00.000Z'),
+    })
+
+    expect(client.send.mock.calls[0][0].input).toEqual(
+      expect.objectContaining({
+        KeyConditionExpression: 'spaceId = :spaceId',
+        FilterExpression:
+          'encryptedContent = :storageKey AND isDeleted = :isDeleted AND expiresAtEpoch > :now',
+        ExpressionAttributeValues: expect.objectContaining({
+          ':spaceId': 'space-1',
+          ':storageKey': storageKey,
+        }),
+      }),
+    )
+    expect(message).toEqual(expect.objectContaining({ id: 'm1' }))
+  })
+
   test('selects DynamoDB only when STORAGE_DRIVER=dynamodb', () => {
     const dynamoStores = createStores({
       env: { STORAGE_DRIVER: 'dynamodb', FILE_DRIVER: 'local' },

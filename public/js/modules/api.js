@@ -201,6 +201,15 @@
       )
     },
 
+    async resolveDownloadUrl(encryptedContent) {
+      return await resolveDownloadUrl(encryptedContent)
+    },
+
+    async downloadEncryptedContent(encryptedContent) {
+      const downloadUrl = await resolveDownloadUrl(encryptedContent)
+      return await fetchBinary(downloadUrl)
+    },
+
     async uploadFile(fileData, fileName, options = {}) {
       const presign = await call('/files/presign-upload', {
         method: 'POST',

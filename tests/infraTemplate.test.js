@@ -19,4 +19,12 @@ describe('CDK infrastructure definition', () => {
     expect(stackSource).toContain("arnForObjects('spaces/*')")
     expect(stackSource).toContain('/POST/@connections/*')
   })
+
+  test('configures browser upload CORS, static deployment, and websocket runtime config', () => {
+    expect(stackSource).toContain('allowedMethods: [s3.HttpMethods.GET, s3.HttpMethods.POST]')
+    expect(stackSource).toContain('StaticAssetDeployment')
+    expect(stackSource).toContain("s3deploy.Source.asset(path.join(repoRoot, 'public')")
+    expect(stackSource).toContain("exclude: ['uploads/*', 'uploads/**']")
+    expect(stackSource).toContain("httpFunction.addEnvironment('PUBLIC_WS_URL'")
+  })
 })

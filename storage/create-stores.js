@@ -1,5 +1,4 @@
 const path = require('path')
-const Database = require('better-sqlite3')
 const { getAppSecret } = require('../utils/passphrase')
 const { createLocalStores } = require('./sqlite-store')
 const {
@@ -25,6 +24,7 @@ function createStores(options = {}) {
     spaceStore = new DynamoDbSpaceStore(options.dynamoDb)
     messageStore = new DynamoDbMessageStore(options.dynamoDb)
   } else {
+    const Database = require('better-sqlite3')
     db = db || new Database(env.SQLITE_DB_PATH || 'secure_chat.db')
     ;({ spaceStore, messageStore } = createLocalStores({
       db,

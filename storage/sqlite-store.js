@@ -1,6 +1,11 @@
 const fs = require('fs')
 const path = require('path')
 const { hashPassphrase, getAppSecret } = require('../utils/passphrase')
+const {
+  assertAllowedDownloadKey,
+  assertAllowedLocalDownloadKey,
+  assertPresignedUploadInput,
+} = require('../utils/file-validation')
 
 function createSpaceExistsError() {
   const error = new Error('Space already exists')
@@ -130,6 +135,23 @@ class SqliteMessageStore {
       .run(now.toISOString())
     return result.changes
   }
+
+  async findActiveMediaMessageByStorageKey(storageKey, options = {}) {
+    assertAllowedDownloadKey(storageKey)
+    const now = options.now || new Date()
+    const row = this.db
+      .prepare(
+        `SELECT id, space_id, encrypted_content, timestamp, expires_at,
+                is_deleted, encrypted, encrypted_payload, message_type, metadata
+         FROM messages
+         WHERE encrypted_content = ?
+           AND is_deleted = 0
+           AND expires_at > ?
+         LIMIT 1`,
+      )
+      .get(storageKey, now.toISOString())
+    return row ? formatMessage(row) : null
+  }
 }
 
 class LocalFileStore {
@@ -148,7 +170,8 @@ class LocalFileStore {
     }
   }
 
-  async createPresignedUpload() {
+  async createPresignedUpload(input = {}) {
+    assertPresignedUploadInput(input)
     return {
       mode: 'local-multipart',
       uploadUrl: '/api/files/upload',
@@ -156,6 +179,7 @@ class LocalFileStore {
   }
 
   async createPresignedDownload(storageKey) {
+    assertAllowedLocalDownloadKey(storageKey)
     return {
       downloadUrl: storageKey,
     }

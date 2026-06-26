@@ -271,9 +271,7 @@ window.SecureChatApp = () => {
                     currentSpace.id,
                   );
               } else if (receivedMessage.message_type === 'image' || receivedMessage.message_type === 'audio') {
-                 const response = await fetch(receivedMessage.encrypted_content);
-                 if (!response.ok) throw new Error('ファイルの取得に失敗しました。');
-                 const encryptedBuffer = await response.arrayBuffer();
+                 const encryptedBuffer = await window.API.downloadEncryptedContent(receivedMessage.encrypted_content);
                  const decryptedBuffer = await window.Crypto.decryptFile(encryptedBuffer, receivedMessage.encrypted_payload, currentSpace.id);
                  const blob = new Blob([decryptedBuffer], { type: receivedMessage.metadata.type });
                  receivedMessage.blobUrl = URL.createObjectURL(blob);

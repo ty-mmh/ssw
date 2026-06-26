@@ -1,4 +1,8 @@
 const { sanitizeSpace } = require('../services/space-service')
+const {
+  assertAllowedS3DownloadKey,
+  getSpaceIdFromS3StorageKey,
+} = require('../utils/file-validation')
 
 class DynamoDbSpaceStore {
   constructor(options = {}) {
@@ -122,6 +126,30 @@ class DynamoDbMessageStore {
 
   async cleanupExpiredMessages() {
     return 0
+  }
+
+  async findActiveMediaMessageByStorageKey(storageKey, options = {}) {
+    assertAllowedS3DownloadKey(storageKey)
+    const { QueryCommand } = require('@aws-sdk/lib-dynamodb')
+    const nowEpoch = Math.floor((options.now || new Date()).getTime() / 1000)
+    const spaceId = getSpaceIdFromS3StorageKey(storageKey)
+    const result = await this.client.send(
+      new QueryCommand({
+        TableName: this.tableName,
+        KeyConditionExpression: 'spaceId = :spaceId',
+        FilterExpression:
+          'encryptedContent = :storageKey AND isDeleted = :isDeleted AND expiresAtEpoch > :now',
+        ExpressionAttributeValues: {
+          ':spaceId': spaceId,
+          ':storageKey': storageKey,
+          ':isDeleted': 0,
+          ':now': nowEpoch,
+        },
+        ScanIndexForward: true,
+      }),
+    )
+    const [item] = result.Items || []
+    return item ? fromDynamoMessage(item) : null
   }
 }
 

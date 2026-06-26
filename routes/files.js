@@ -1,8 +1,10 @@
 const express = require('express')
+const { isInvalidFileRequest } = require('../utils/file-validation')
+const { storageKeyHasActiveMessage } = require('../services/file-download-service')
 
 module.exports = (context) => {
   const router = express.Router()
-  const { fileStore, upload } = context
+  const { fileStore, messageStore, upload } = context
 
   router.post('/upload', (req, res) => {
     if (!upload) {
@@ -47,6 +49,9 @@ module.exports = (context) => {
       res.json({ success: true, ...result })
     } catch (error) {
       console.error('presign upload error', { error: error.message })
+      if (isInvalidFileRequest(error)) {
+        return res.status(400).json({ success: false, error: error.message })
+      }
       res
         .status(500)
         .json({ success: false, error: 'アップロードURLの発行に失敗しました。' })
@@ -61,10 +66,18 @@ module.exports = (context) => {
           .status(400)
           .json({ success: false, error: 'key is required.' })
       }
+      if (!(await storageKeyHasActiveMessage(messageStore, storageKey))) {
+        return res
+          .status(404)
+          .json({ success: false, error: 'storage key was not found.' })
+      }
       const result = await fileStore.createPresignedDownload(storageKey)
       res.json({ success: true, ...result })
     } catch (error) {
       console.error('presign download error', { error: error.message })
+      if (isInvalidFileRequest(error)) {
+        return res.status(400).json({ success: false, error: error.message })
+      }
       res
         .status(500)
         .json({ success: false, error: 'ダウンロードURLの発行に失敗しました。' })

@@ -10,6 +10,7 @@ const iam = require('aws-cdk-lib/aws-iam')
 const lambda = require('aws-cdk-lib/aws-lambda')
 const nodejs = require('aws-cdk-lib/aws-lambda-nodejs')
 const s3 = require('aws-cdk-lib/aws-s3')
+const s3deploy = require('aws-cdk-lib/aws-s3-deployment')
 
 class SswServerlessStack extends cdk.Stack {
   constructor(scope, id, props) {
@@ -42,6 +43,15 @@ class SswServerlessStack extends cdk.Stack {
 
     const uploadsBucket = new s3.Bucket(this, 'UploadsBucket', {
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      cors: [
+        {
+          allowedHeaders: ['*'],
+          allowedMethods: [s3.HttpMethods.GET, s3.HttpMethods.POST],
+          allowedOrigins: ['*'],
+          exposedHeaders: ['ETag'],
+          maxAge: 300,
+        },
+      ],
       encryption: s3.BucketEncryption.S3_MANAGED,
       enforceSSL: true,
       removalPolicy: cdk.RemovalPolicy.RETAIN,
@@ -135,6 +145,17 @@ class SswServerlessStack extends cdk.Stack {
       },
     })
 
+    new s3deploy.BucketDeployment(this, 'StaticAssetDeployment', {
+      sources: [
+        s3deploy.Source.asset(path.join(repoRoot, 'public'), {
+          exclude: ['uploads/*', 'uploads/**'],
+        }),
+      ],
+      destinationBucket: staticBucket,
+      distribution,
+      distributionPaths: ['/*'],
+    })
+
     const websocketFunction = new nodejs.NodejsFunction(this, 'WebSocketFunction', {
       runtime: lambda.Runtime.NODEJS_20_X,
       entry: path.join(repoRoot, 'lambda', 'websocket.js'),
@@ -171,6 +192,7 @@ class SswServerlessStack extends cdk.Stack {
       stageName: 'prod',
       autoDeploy: true,
     })
+    httpFunction.addEnvironment('PUBLIC_WS_URL', websocketStage.url)
     websocketFunction.addEnvironment(
       'WEBSOCKET_CALLBACK_URL',
       `https://${websocketApi.apiId}.execute-api.${this.region}.${this.urlSuffix}/${websocketStage.stageName}`,

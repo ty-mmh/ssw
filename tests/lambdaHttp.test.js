@@ -67,6 +67,62 @@ describe('Lambda HTTP handler', () => {
     })
     expect(JSON.parse(listMessages.body).messages).toHaveLength(1)
   })
+
+  test('rejects invalid presign requests before signing', async () => {
+    const { handler } = require('../lambda/http')
+
+    const uploadResponse = await handler(
+      event('POST', '/api/files/presign-upload', {
+        spaceId: '../space',
+        messageId: 'message-1',
+        fileName: 'photo.png',
+        contentType: 'image/png',
+      }),
+    )
+    expect(uploadResponse.statusCode).toBe(400)
+
+    const downloadResponse = await handler({
+      requestContext: { http: { method: 'GET' } },
+      rawPath: '/api/files/presign-download',
+      queryStringParameters: { key: 'https://example.test/file.bin' },
+    })
+    expect(downloadResponse.statusCode).toBe(400)
+  })
+
+  test('signs downloads only when the storage key is referenced by an active message', async () => {
+    const { handler } = require('../lambda/http')
+    const createSpace = await handler(
+      event('POST', '/api/spaces/create', { passphrase: 'room' }),
+    )
+    const space = JSON.parse(createSpace.body).space
+    const storageKey = '/uploads/file-123.png'
+
+    await handler(
+      event('POST', '/api/messages/create', {
+        spaceId: space.id,
+        message: storageKey,
+        encrypted: true,
+        encryptedPayload: { type: 'file' },
+        messageType: 'image',
+        metadata: { type: 'image/png' },
+      }),
+    )
+
+    const foundResponse = await handler({
+      requestContext: { http: { method: 'GET' } },
+      rawPath: '/api/files/presign-download',
+      queryStringParameters: { key: storageKey },
+    })
+    expect(foundResponse.statusCode).toBe(200)
+    expect(JSON.parse(foundResponse.body).downloadUrl).toBe(storageKey)
+
+    const missingResponse = await handler({
+      requestContext: { http: { method: 'GET' } },
+      rawPath: '/api/files/presign-download',
+      queryStringParameters: { key: '/uploads/missing.png' },
+    })
+    expect(missingResponse.statusCode).toBe(404)
+  })
 })
 
 function event(method, rawPath, body) {
