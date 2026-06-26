@@ -25,17 +25,45 @@ window.SecureChatApp = () => {
 
   const fileInputRef = useRef(null);
 
+  const mergeRuntimeConfig = (config = {}) => {
+    const nextConfig = { ...(window.SSW_CONFIG || {}) }
+    Object.entries(config).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== '') {
+        nextConfig[key] = value
+      }
+    })
+    window.SSW_CONFIG = nextConfig
+    setAppConfig(nextConfig)
+    return nextConfig
+  }
+
+  const apiUrl = (endpoint) => {
+    const baseUrl = window.SSW_CONFIG?.apiBaseUrl || ''
+    return `${baseUrl.replace(/\/$/, '')}/api${endpoint}`
+  }
+
+  const mergeMessages = (currentMessages, incomingMessages) => {
+    const byId = new Map(currentMessages.map((msg) => [msg.id, msg]))
+    incomingMessages.forEach((msg) => {
+      if (!byId.has(msg.id)) byId.set(msg.id, msg)
+    })
+    return Array.from(byId.values()).sort(
+      (a, b) => new Date(a.timestamp) - new Date(b.timestamp),
+    )
+  }
+
   useEffect(() => {
     if (window.ErrorHandler) {
       window.ErrorHandler.initialize()
     }
+    mergeRuntimeConfig()
     const fetchConfig = async () => {
         try {
-            const response = await fetch('/api/config');
+            const response = await fetch(apiUrl('/config'));
             const data = await response.json();
             if (data.success) {
-                setAppConfig(data.config);
-                console.log('サーバーから設定情報を取得しました:', data.config);
+                const nextConfig = mergeRuntimeConfig(data.config);
+                console.log('サーバーから設定情報を取得しました:', nextConfig);
             }
         } catch (error) {
             console.error('設定情報の取得に失敗しました:', error);
@@ -63,7 +91,7 @@ window.SecureChatApp = () => {
       await window.API.setPassphraseForApi(passphrase);
       
       const space = await window.API.enterSpace(passphrase)
-      setCurrentSpace(space)
+      setCurrentSpace({ ...space, passphrase })
       const loadedMessages = await window.API.loadMessagesFriendly(space.id)
       setMessages(loadedMessages)
       setEncryptionStatus('enabled')
@@ -194,20 +222,23 @@ window.SecureChatApp = () => {
   useEffect(() => {
     if (!currentSpace) return
 
-    const newSocket = io()
+    const newSocket = window.RealtimeClient
+      ? window.RealtimeClient.connect()
+      : null
+    if (!newSocket) {
+      setConnectionStatus('polling')
+      return
+    }
     setSocket(newSocket)
     setConnectionStatus('connecting')
 
     newSocket.on('connect', async () => {
       setConnectionStatus('connected')
-      window.SessionManager.setCurrentSession(newSocket.id, currentSpace.id)
       newSocket.emit('join-space', currentSpace.id)
-      window.SessionManager.setSocket(newSocket)
 
       if (window.KeyExchangeManager) {
         try {
           await window.KeyExchangeManager.initialize(newSocket, currentSpace.id)
-          await window.KeyExchangeManager.announcePublicKey()
         } catch (error) {
           console.error('KeyExchangeManagerの初期化に失敗しました', error)
           setError('暗号化の初期設定に失敗しました。')
@@ -260,7 +291,12 @@ window.SecureChatApp = () => {
 
     newSocket.on('space-joined-successfully', (data) => {
       if (data.spaceId === currentSpace.id && window.SessionManager) {
+        window.SessionManager.setCurrentSession(data.sessionId, currentSpace.id)
+        window.SessionManager.setSocket(newSocket)
         window.SessionManager.syncAllSessions(data.spaceId, data.allSessionIds)
+        if (window.KeyExchangeManager) {
+          window.KeyExchangeManager.announcePublicKey()
+        }
       }
     })
 
@@ -268,6 +304,29 @@ window.SecureChatApp = () => {
       newSocket.disconnect()
     }
   }, [currentSpace])
+
+  useEffect(() => {
+    if (!currentSpace) return
+    const intervalMs = window.SSW_CONFIG?.pollingIntervalMs || 5000
+    const timer = setInterval(async () => {
+      try {
+        const lastTimestamp = messages.reduce((latest, msg) => {
+          const timestamp = msg.timestamp instanceof Date ? msg.timestamp : new Date(msg.timestamp)
+          return !latest || timestamp > latest ? timestamp : latest
+        }, null)
+        const loadedMessages = await window.API.loadMessagesFriendly(
+          currentSpace.id,
+          lastTimestamp ? { since: lastTimestamp.toISOString() } : {},
+        )
+        if (loadedMessages.length > 0) {
+          setMessages((prev) => mergeMessages(prev, loadedMessages))
+        }
+      } catch (error) {
+        console.warn('polling update failed', error.message)
+      }
+    }, intervalMs)
+    return () => clearInterval(timer)
+  }, [currentSpace, messages])
 
   useEffect(() => {
     const handleSessionStateChange = (event) => {

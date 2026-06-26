@@ -9,7 +9,6 @@
     
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-    <script src="/socket.io/socket.io.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     
     <style>
@@ -75,6 +74,7 @@
 <body class="bg-stone-950">
     <div id="root"></div>
 
+    <script src="/runtime-config.js"></script>
     <script>
       tailwind.config = {
         darkMode: 'class',
@@ -112,6 +112,7 @@
     <script src="/js/modules/KeyExchangeManager.js"></script>
     <script src="/js/modules/crypto.js"></script>
     <script src="/js/modules/api.js"></script>
+    <script src="/js/modules/realtime.js"></script>
 
     <script src="/js/modules/ErrorHandler.js"></script>
     <script src="/js/components/UnifiedErrorDisplay.js"></script>

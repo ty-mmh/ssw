@@ -1,0 +1,16 @@
+{
+  "name": "ssw-infra",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "synth": "cdk synth"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.150.0",
+    "constructs": "^10.3.0",
+    "secure-chat-friendly-mode": "file:../.."
+  },
+  "devDependencies": {
+    "aws-cdk": "^2.150.0"
+  }
+}

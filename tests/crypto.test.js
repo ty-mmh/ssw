@@ -55,10 +55,12 @@ describe('Crypto Module', () => {
     await window.Crypto.getOrCreateSpaceKey(spaceId, passphrase)
 
     // 実行と検証
-    const payload = await window.Crypto.encryptMessageHybrid(message, spaceId, [
-      's1',
-      's2',
-    ])
+    const payload = await window.Crypto.encryptMessage(
+      message,
+      spaceId,
+      ['s1', 's2'],
+      passphrase,
+    )
     expect(payload.type).toBe('hybrid')
   })
 })

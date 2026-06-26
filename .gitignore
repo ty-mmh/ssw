@@ -3,3 +3,5 @@ secure_chat.db-shm
 secure_chat.db-wal
 node_modules
 public/uploads/*
+infra/cdk/cdk.out/
+infra/cdk/node_modules/
