@@ -20,7 +20,7 @@
 - [Ticket 06: S3 File Storage And Presigned URLs](ticket-06-s3-file-storage-and-presigned-urls.md)
 - [Ticket 07: Lambda HTTP Handlers And API Gateway Shape](ticket-07-lambda-http-handlers-and-api-gateway-shape.md)
 - [Ticket 08: Static Hosting And Runtime Config](ticket-08-static-hosting-and-runtime-config.md)
-- [Ticket 09: Data Migration Plan And Scripts](ticket-09-data-migration-plan-and-scripts.md)
+- [Ticket 09: Archived / Not Planned Data Migration](ticket-09-data-migration-plan-and-scripts.md)
 - [Ticket 10: AWS Infrastructure, Cost Guards, And Deployment](ticket-10-aws-infrastructure-cost-guards-and-deployment.md)
 - [Ticket 11: API Gateway WebSocket Migration](ticket-11-api-gateway-websocket-migration.md)
 - [Ticket 12: Final Cutover And Raspberry Pi Decommission Plan](ticket-12-final-cutover-and-raspberry-pi-decommission-plan.md)

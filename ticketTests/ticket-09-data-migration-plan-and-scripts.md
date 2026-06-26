@@ -1,44 +1,31 @@
-# Ticket 09 Test Cases: Data Migration Plan And Scripts
+# Ticket 09 Test Cases: Archived / Not Planned Data Migration
 
 ## Goal under test
 
-必要であれば、既存Raspberry Pi上のSQLite DBとuploadsをAWS側へ移せるようにする。
+既存Raspberry Pi上のSQLite DBとuploadsはAWSへ移行しない。AWS版はclean DynamoDB/S3で開始する。
 
 ## Automated tests
 
-1. migration scriptのdry-runが、SQLite DBを読み取り専用で開く。
-2. dry-runが次の件数を出す。
-   - spaces
-   - messages
-   - media messages
-   - upload files found
-   - upload files missing
-3. 平文 `passphrase` が `passphraseHash` に変換される。
-4. 移行先payloadに平文 `passphrase` が含まれない。
-5. `/uploads/...` 参照が `s3Key` 予定値へ変換される。
-6. dry-runではDynamoDB/S3へ書き込まない。
-7. 破損JSON、missing file、unknown message typeを検出し、サマリに出せる。
+1. Ticket 09が Archived / Not Planned として記録されている。
+2. AWS版の必須テストや完了条件が、既存DB移行の実行を要求していない。
+3. migration scriptが残る場合も、実運用ロードマップの必須成果物として扱われていない。
 
 ## Integration tests
 
-1. fixture SQLite DBとfixture uploadsを使ってdry-runが成功する。
-2. mock DynamoDB/S3に対する実行モードで、期待件数が書き込まれる。
-3. 移行後のmessagesが既存フロントの復号に必要なpayloadを保持している。
-4. 同じ移行を再実行した場合の挙動が定義されている。
-   - 推奨: idempotentにskip、または明示的にconflictで止める。
+1. AWS dev/staging検証は、新規spaceと新規messageで実施できる。
+2. clean DynamoDB/S3前提でも、Ticket 10-12の検証手順が成立する。
 
 ## Manual checks
 
-1. 本番実行前に対象DB pathとuploads pathを人間が確認する手順がある。
-2. 実AWSへのuploadは明示許可なしに行わない。
-3. rollbackは移行先table/prefix単位で削除できる設計になっている。
+1. 切替前にRaspberry Pi側の `secure_chat.db` と `public/uploads` をバックアップまたは予備確認用として扱う判断が残っている。
+2. 既存DB移行を行わない方針が切替手順の前提と矛盾していない。
 
 ## Non-goals
 
-- 実験環境で新規DBを使う場合、このチケットの実行は必須ではない。
+- migration scriptの完成、dry-run、DynamoDB/S3への既存データ投入は含めない。
+- 既存passphraseとAWS `APP_SECRET` の互換性確保は含めない。
 - DNS切替やRaspberry Pi停止は含めない。
-- 本番データをこのテストで外部送信しない。
 
 ## Pass condition
 
-dry-runで移行対象と変換内容が明確になり、mock環境への移行で復号に必要な情報が失われなければ完了。
+Ticket 09が実運用パスに含まれないことが明記され、AWS版をclean DynamoDB/S3で開始する前提が他チケットと矛盾しなければ完了。

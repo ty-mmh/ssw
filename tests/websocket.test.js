@@ -86,6 +86,44 @@ describe('WebSocket handler', () => {
     )
   })
 
+  test('broadcasts session-left to remaining space connections on disconnect', async () => {
+    await handler(wsEvent('$connect', 'c1'))
+    await handler(wsEvent('$connect', 'c2'))
+    await handler(wsEvent('$connect', 'c3'))
+    await handler(wsEvent('joinSpace', 'c1', { action: 'joinSpace', spaceId: 's1' }))
+    await handler(wsEvent('joinSpace', 'c2', { action: 'joinSpace', spaceId: 's1' }))
+    await handler(wsEvent('joinSpace', 'c3', { action: 'joinSpace', spaceId: 's2' }))
+    sent = []
+
+    await handler(wsEvent('$disconnect', 'c1'))
+
+    expect(sent).toEqual([
+      expect.objectContaining({
+        connectionId: 'c2',
+        payload: {
+          event: 'session-left',
+          spaceId: 's1',
+          sessionId: 'c1',
+          sessionCount: 1,
+          allSessionIds: ['c2'],
+        },
+      }),
+    ])
+    expect(sessionStore._connections.has('c1')).toBe(false)
+  })
+
+  test('disconnects unjoined connections without broadcasting session-left', async () => {
+    await handler(wsEvent('$connect', 'c1'))
+    await handler(wsEvent('$connect', 'c2'))
+    await handler(wsEvent('joinSpace', 'c2', { action: 'joinSpace', spaceId: 's1' }))
+    sent = []
+
+    await handler(wsEvent('$disconnect', 'c1'))
+
+    expect(sent).toEqual([])
+    expect(sessionStore._connections.has('c1')).toBe(false)
+  })
+
   test('removes gone connections during broadcast', async () => {
     await handler(wsEvent('$connect', 'c1'))
     await handler(wsEvent('$connect', 'c2'))
@@ -127,6 +165,9 @@ function createSessionStore() {
     _connections: connections,
     async connect(connectionId, expiresAtEpoch) {
       connections.set(connectionId, { connectionId, expiresAtEpoch })
+    },
+    async getConnection(connectionId) {
+      return connections.get(connectionId) || null
     },
     async disconnect(connectionId) {
       connections.delete(connectionId)

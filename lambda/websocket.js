@@ -28,7 +28,11 @@ async function handler(event) {
   }
 
   if (routeKey === '$disconnect') {
+    const disconnectedConnection = await sessionStore.getConnection(connectionId)
     await sessionStore.disconnect(connectionId)
+    if (disconnectedConnection?.spaceId) {
+      await broadcastSessionLeft(disconnectedConnection)
+    }
     return { statusCode: 200, body: 'disconnected' }
   }
 
@@ -92,11 +96,36 @@ async function handler(event) {
 async function broadcast(spaceId, payload, exceptConnectionId = null) {
   const { sessionStore } = getContext()
   const connections = await sessionStore.getSpaceConnections(spaceId)
-  await Promise.all(
-    connections
-      .filter((connection) => connection.connectionId !== exceptConnectionId)
-      .map((connection) => send(connection.connectionId, payload)),
+  await broadcastToConnections(
+    connections.filter(
+      (connection) => connection.connectionId !== exceptConnectionId,
+    ),
+    payload,
   )
+}
+
+async function broadcastSessionLeft(disconnectedConnection) {
+  const { sessionStore } = getContext()
+  const spaceId = disconnectedConnection.spaceId
+  const remainingConnections = await sessionStore.getSpaceConnections(spaceId)
+  const allSessionIds = remainingConnections.map(getSessionId)
+  await broadcastToConnections(remainingConnections, {
+    event: 'session-left',
+    spaceId,
+    sessionId: getSessionId(disconnectedConnection),
+    sessionCount: remainingConnections.length,
+    allSessionIds,
+  })
+}
+
+async function broadcastToConnections(connections, payload) {
+  await Promise.all(
+    connections.map((connection) => send(connection.connectionId, payload)),
+  )
+}
+
+function getSessionId(connection) {
+  return connection.sessionId || connection.connectionId
 }
 
 async function send(connectionId, payload) {

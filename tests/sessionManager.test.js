@@ -22,4 +22,22 @@ describe('SessionManager Module', () => {
     ).toBe('hybrid')
     expect(document.dispatchEvent).toHaveBeenCalled()
   })
+  test('session-left updates active sessions and encryption level', () => {
+    window.SessionManager.setCurrentSession(sA, spaceId)
+    window.SessionManager.addSessionToSpace(spaceId, sB)
+    document.dispatchEvent.mockClear()
+
+    const sessionLeftHandler = mockSocket.on.mock.calls.find(
+      ([eventName]) => eventName === 'session-left',
+    )[1]
+    sessionLeftHandler({ spaceId, sessionId: sB })
+
+    expect(window.SessionManager.getActiveSessionsForSpace(spaceId)).toEqual([
+      sA,
+    ])
+    expect(
+      window.SessionManager.getEncryptionLevelForSpace(spaceId),
+    ).toMatchObject({ level: 'deterministic', sessionCount: 1 })
+    expect(document.dispatchEvent).toHaveBeenCalled()
+  })
 })

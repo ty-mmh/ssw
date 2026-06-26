@@ -7,6 +7,10 @@ class MemorySessionStore {
     this.connections.set(connectionId, { connectionId, expiresAtEpoch })
   }
 
+  async getConnection(connectionId) {
+    return this.connections.get(connectionId) || null
+  }
+
   async joinSpace(connectionId, spaceId, publicKey = null) {
     const current = this.connections.get(connectionId) || { connectionId }
     this.connections.set(connectionId, {
@@ -52,6 +56,17 @@ class DynamoDbSessionStore {
         Item: { connectionId, expiresAtEpoch },
       }),
     )
+  }
+
+  async getConnection(connectionId) {
+    const { GetCommand } = require('@aws-sdk/lib-dynamodb')
+    const result = await this.client.send(
+      new GetCommand({
+        TableName: this.tableName,
+        Key: { connectionId },
+      }),
+    )
+    return result.Item || null
   }
 
   async joinSpace(connectionId, spaceId, publicKey = null) {
