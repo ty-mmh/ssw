@@ -234,7 +234,7 @@ window.SecureChatApp = () => {
 
     newSocket.on('connect', async () => {
       setConnectionStatus('connected')
-      newSocket.emit('join-space', currentSpace.id)
+      newSocket.emit('join-space', { spaceId: currentSpace.id })
 
       if (window.KeyExchangeManager) {
         try {

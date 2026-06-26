@@ -1,3 +1,6 @@
+const fs = require('fs')
+const path = require('path')
+
 describe('RealtimeClient', () => {
   beforeEach(() => {
     jest.resetModules()
@@ -43,6 +46,35 @@ describe('RealtimeClient', () => {
     expect(received).toHaveBeenCalledWith(
       expect.objectContaining({ sessionId: 'connection-1' }),
     )
+  })
+
+  test('keeps compatibility for string join-space payloads', () => {
+    global.WebSocket = FakeWebSocket
+    window.SSW_CONFIG = { wsUrl: 'wss://example.test/ws' }
+    require('../public/js/modules/realtime.js')
+
+    const client = window.RealtimeClient.connect()
+    const ws = FakeWebSocket.instances[0]
+
+    ws.open()
+    client.emit('join-space', 'space-1')
+
+    expect(JSON.parse(ws.sent[0])).toEqual({
+      action: 'joinSpace',
+      spaceId: 'space-1',
+    })
+  })
+
+  test('app joins native WebSocket with an object payload', () => {
+    const appSource = fs.readFileSync(
+      path.join(__dirname, '..', 'public', 'js', 'app.js'),
+      'utf8',
+    )
+
+    expect(appSource).toContain(
+      "newSocket.emit('join-space', { spaceId: currentSpace.id })",
+    )
+    expect(appSource).not.toContain("newSocket.emit('join-space', currentSpace.id)")
   })
 })
 

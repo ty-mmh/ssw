@@ -25,10 +25,16 @@
       off(event) {
         handlers.delete(event)
       },
-      emit(event, payload) {
+      emit(event, payload = {}) {
         const action = socketEventToAction(event)
         if (!action || ws.readyState !== WebSocket.OPEN) return
-        ws.send(JSON.stringify({ action, ...payload }))
+        const body =
+          payload && typeof payload === 'object'
+            ? payload
+            : event === 'join-space'
+              ? { spaceId: payload }
+              : {}
+        ws.send(JSON.stringify({ action, ...body }))
       },
       disconnect() {
         ws.close()

@@ -1,164 +1,87 @@
-確認した。結論としては、方向性はかなり良い。ただし、まだ AWS に deploy してよい段階ではない。特に Lambda 起動時に落ちる可能性が高い箇所 がある。
+確認した。main は d15e3fa... の v2.0.1 になっている。
 
-総評
+結論として、v2.0.1 は前回よりかなり良くなっている。AWS 検証にかなり近い。ただし、WebSocket を有効にした状態ではまだ1点ブロッカーがある。
 
-Codex / Claude Code の対応で、以前の「Raspberry Pi 常駐 Express + Socket.IO + SQLite + local uploads」から、かなり明確に AWS サーバレス寄りへ切られている。
+前回指摘の修正状況
 
-良い変更としては、AWS SDK 依存が追加され、DynamoDB / S3 / API Gateway Management API へ寄せる準備が入っている。socket.io 依存も package から外れている。
+かなり潰れている。
 
-server.js もかなり整理されていて、store / service / route の境界ができ、以前の Socket.IO 常駐ロジックは消えている。
+better-sqlite3 の Lambda 起動ブロッカーは修正済み。create-stores.js で better-sqlite3 が SQLite 分岐内の lazy require になっている。 CDK 側では引き続き better-sqlite3 は external 扱いなので、この形なら DynamoDB Lambda 起動時に巻き込まれにくい。
 
-合言葉の平文保存をやめて HMAC hash 化する方向も入っている。createSpace では passphraseHash を作って保存し、レスポンスから passphrase / passphraseHash を落とす sanitizeSpace も入っている。
+S3 直接アップロード用 CORS も入っている。uploads bucket に GET / POST、allowedHeaders: ['*']、allowedOrigins: ['*'] が設定された。
 
-DynamoDB / S3 / WebSocket / Budget まで CDK に入っているのも良い。DynamoDB は Spaces, Messages, Connections に分かれていて、messages / connections には TTL が入っている。 S3 uploads bucket も public block / encryption / SSL / lifecycle 付き。 Budget guard も入っている。
+静的ファイル配信も BucketDeployment が追加され、public を static bucket に配備しつつ uploads は除外されている。
 
-最優先で直すべき点
+WebSocket URL も HTTP Lambda の runtime config に渡るようになった。CDK で PUBLIC_WS_URL を入れ、config service 側も wsUrl を返す。
 
-1. Lambda が better-sqlite3 require で落ちる可能性が高い
+presign 周りの入力検証もかなり良くなった。spaceId / messageId / fileName / contentType を検証し、download key も spaces/{spaceId}/messages/{messageId}/... 形式に制限している。 S3 側もこの検証を使っている。
 
-ここが最大のブロッカー。
+さらに、download presign は active message が存在する storage key だけ通すようになっている。Lambda HTTP handler でも storageKeyHasActiveMessage を確認してから presigned download を発行している。 DynamoDB 側も storage key から spaceId を取り、期限切れ・削除済みでない message を探す実装が入っている。
 
-storage/create-stores.js が top-level で better-sqlite3 を require している。 一方で CDK の Lambda bundling では better-sqlite3 を external にしている。
+CI workflow も追加済みで、npm test と cdk synth を回す構成になっている。 ただし、このコネクタ上ではまだ workflow run は見えていない。
 
-つまり、Lambda では STORAGE_DRIVER=dynamodb なので SQLite を使わないつもりでも、require('../storage/create-stores') した時点で better-sqlite3 が必要になり、cold start で Cannot find module 'better-sqlite3' になる可能性が高い。
+まだ残っているブロッカー
 
-修正方針は、better-sqlite3 を SQLite 分岐内へ遅延 require すること。
+WebSocket join が壊れる可能性が高い
 
-// NG: top-level
-const Database = require('better-sqlite3')
+ここは直した方がいい。
 
-// OK: sqlite branch only
-if (storageDriver !== 'dynamodb') {
-  const Database = require('better-sqlite3')
-  db = db || new Database(env.SQLITE_DB_PATH || 'secure_chat.db')
+RealtimeClient.emit() は payload を object として spread する実装になっている。 しかし app 側では join-space に currentSpace.id という文字列を渡している。
+
+つまり、実際に送られる JSON は期待される
+
+{"action":"joinSpace","spaceId":"..."}
+
+ではなく、文字列を spread したような { "0": "...", "1": "...", "action": "joinSpace" } 形になり、body.spaceId が入らない可能性が高い。WebSocket handler は body.spaceId を前提に join / broadcast している。
+
+修正は小さい。
+
+newSocket.emit('join-space', { spaceId: currentSpace.id })
+
+ついでに RealtimeClient.emit() 側も防御的にしておくとよい。
+
+emit(event, payload = {}) {
+  const action = socketEventToAction(event)
+  if (!action || ws.readyState !== WebSocket.OPEN) return
+  const body =
+    payload && typeof payload === 'object'
+      ? payload
+      : event === 'join-space'
+        ? { spaceId: payload }
+        : {}
+  ws.send(JSON.stringify({ action, ...body }))
 }
 
-これは即修正でよい。
+なお、テストでは client.emit('join-space', { spaceId: 'space-1' }) で検証しているため、現行 app 側の文字列呼び出しは拾えていない。
 
-2. Static hosting のデプロイが未完成に見える
+既存DB移行なし方針について
 
-CDK では static bucket と CloudFront distribution は作られている。 ただ、public/ を S3 にアップロードする BucketDeployment 的な定義が見当たらない。
+それなら、かなり楽になる。既存DB移行を前提にした Ticket 09 / migrate script は実運用パスから外してよい。
 
-このままだと、インフラは立っても CloudFront の origin bucket が空で、アプリ本体が配信されない可能性がある。
+docs では Ticket 09 が「必要であれば」となっており、既存 SQLite / uploads を AWS に移すスクリプトを用意する扱いになっている。 さらに reservation でも「新規DBで始めてもよい。その場合、このチケットは後回しにできる」と書かれている。
 
-追加するなら：
+今回の方針なら、Ticket 09 は「後回し」ではなく not planned / archive でよい。AWS 版は clean DynamoDB で始める前提にする。
 
-const s3deploy = require('aws-cdk-lib/aws-s3-deployment')
+追加で気になるが、ブロッカーではない点
 
-new s3deploy.BucketDeployment(this, 'DeployStaticAssets', {
-  sources: [s3deploy.Source.asset(path.join(repoRoot, 'public'))],
-  destinationBucket: staticBucket,
-  distribution,
-})
+WebSocket の $disconnect は session を消すだけで、残りの接続へ session-left や session count 更新を broadcast していない。 join 時は session-joined と space-joined-successfully を送っているので、入室方向だけ通知される。
 
-3. S3 直接アップロード用 CORS が足りない
-
-フロントは presigned POST を受け取り、ブラウザから S3 に直接 fetch(presign.uploadUrl, { method: 'POST', body: formData }) している。 S3 側も presigned POST を返す実装になっている。
-
-ただ、uploads bucket 定義に CORS が見当たらない。 ブラウザ直アップロードは CORS で詰まる可能性が高い。
-
-最小なら uploads bucket にこれを足す。
-
-cors: [{
-  allowedMethods: [s3.HttpMethods.POST, s3.HttpMethods.GET],
-  allowedOrigins: ['*'],
-  allowedHeaders: ['*'],
-}]
-
-後で CloudFront domain に絞ればよい。
-
-4. WebSocket URL がフロントに渡っていない
-
-CDK は WebSocket API を作って output している。 しかし、フロントの runtime-config.js は wsUrl: '' のまま。 /api/config も PUBLIC_WS_URL を返す設計だけど、HTTP Lambda の environment に PUBLIC_WS_URL が入っていない。
-
-なので、現状 AWS 版では WebSocket が有効化されず、polling fallback で動く形になるはず。これは「段階移行」としてはあり。ただし WebSocket まで動かしたいなら CDK で以下を追加する必要がある。
-
-httpFunction.addEnvironment('PUBLIC_WS_URL', websocketStage.url)
-
-HTTP API を CloudFront 経由にするなら PUBLIC_API_BASE_URL は空でもよい。
-
-5. WebSocket 経由の media 受信が S3 で壊れる
-
-通常の履歴取得では、S3 key を presigned download URL に解決してから fetch している。
-
-一方、WebSocket で image/audio を受けた時は receivedMessage.encrypted_content をそのまま fetch している。 AWS 版では encrypted_content に S3 key が入るため、この経路だけメディア表示に失敗する。
-
-ここは WebSocket 受信側でも resolveDownloadUrl 相当を使う必要がある。
-
-6. presign API の入力検証が弱い
-
-Express route 側では /presign-upload に spaceId / messageId 必須チェックがある。 しかし Lambda HTTP handler では body をそのまま createPresignedUpload に渡している。
-
-また /presign-download は任意の key を受けて署名URLを返す。 S3 key はランダムなので即致命的ではないが、少なくとも spaces/... prefix のみ許可する、.. や空文字を弾く、可能なら message record と照合する、くらいは入れたい。
-
-運用上の注意
-
-APP_SECRET はローカルでは default secret に落ちる。 AWS では /ssw/app-secret の secure SSM parameter を読む想定になっている。
-
-移行スクリプトも getAppSecret() を使って既存 passphrase を hash 化する。 なので、Raspberry Pi の既存データを AWS に移す時は、必ず AWS 本番と同じ APP_SECRET で dry-run / migration する必要がある。ここを間違えると、移行後に既存の合言葉で入れなくなる。
-
-あと、scripts/setup-database.js は既存 DB を削除する。 Raspberry Pi 本番環境で誤って打つと危険なので、ファイル名か警告を強めてもよい。
-
-CI / テストについて
-
-テストはかなり増えているけど、最新 commit に対する GitHub workflow run は見当たらなかった。 package には npm test がある。
-
-最低限、GitHub Actions で以下を回すとよい。
-
-name: test
-
-on:
-  push:
-  pull_request:
-
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-      - run: npm ci
-      - run: npm test
-      - run: npm --prefix infra/cdk ci
-      - run: npm --prefix infra/cdk run synth
+これはデプロイ不能ではないが、複数人接続時の session count / 鍵交換状態が少し stale になる可能性がある。最初は polling fallback を残すなら致命傷ではない。
 
 判定
 
-現状はこう。
+HTTP + polling AWS 検証: ほぼ行ける
+WebSocket 有効AWS検証: join-space payload修正後に行ける
+既存DB移行: 不要方針でOK。Ticket 09 は実運用から外してよい
+Raspberry Pi停止: まだAWS実機検証後
 
-設計方向: 合っている
-ローカル互換: かなり維持されている
-HTTP Lambda: 形はできているが better-sqlite3 require がブロッカー
-DynamoDB: 方向は良い
-S3: 方向は良いが CORS / presign検証が不足
-WebSocket: handler はあるが frontend config 未接続、media受信に穴あり
-CDK: 土台は良いが static deploy と runtime config が未完成
-Raspberry Pi 停止: まだ早い
+次の1コミットでやるならこれ。
 
-次にやるなら、優先順はこれ。
+# v2.0.2 candidate
 
-1. better-sqlite3 の lazy require 化
+- Fix native WebSocket join-space payload shape from app.js.
+- Optionally support string payload compatibility in RealtimeClient.emit().
+- Mark existing DB migration as not planned / optional archive in docs.
+- Optionally broadcast session-left on $disconnect.
 
-
-2. uploads bucket CORS 追加
-
-
-3. static assets の BucketDeployment 追加
-
-
-4. PUBLIC_WS_URL の注入、または「初期AWS版は polling only」と明示
-
-
-5. WebSocket media 受信で presigned download 解決
-
-
-6. presign endpoint の入力検証
-
-
-7. GitHub Actions 追加
-
-
-
-ここまで通れば、HTTP + polling 版として AWS 検証に入れる段階になる。WebSocket はその次でいい。
+この修正後なら、AWS dev/staging に一度立てて、CloudFront URLで新規空間作成 → 入室 → text → image/audio → polling → WebSocket の順に検証でよいと思う。
